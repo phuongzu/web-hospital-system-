@@ -1,0 +1,155 @@
+import React, { useEffect, useState, useRef } from 'react';
+import { API_BASE_URL, getDoctorId, getAvatarUrl } from '../utils/api';
+import { DoctorProfile } from '../types';
+
+const Profile: React.FC = () => {
+  const [profile, setProfile] = useState<DoctorProfile | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const doctorId = getDoctorId();
+
+  const fetchProfile = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/doctors/profile/${doctorId}`);
+      const data = await res.json();
+      if (data.success) setProfile(data.data);
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => { if (doctorId) fetchProfile(); }, [doctorId]);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+     if (!e.target.files?.[0]) return;
+     setUploading(true);
+     const formData = new FormData();
+     formData.append('avatar', e.target.files[0]);
+     try {
+        await fetch(`${API_BASE_URL}/doctors/avatar?doctorId=${doctorId}`, { method: 'POST', body: formData });
+        fetchProfile();
+     } catch (err) { console.error(err); } finally { setUploading(false); }
+  };
+
+  const toggleAvailability = async () => {
+      if (!profile) return;
+      try {
+         await fetch(`${API_BASE_URL}/doctors/availability`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ doctorId, isAvailable: !profile.isAvailable })
+         });
+         setProfile({ ...profile, isAvailable: !profile.isAvailable });
+      } catch (e) { console.error(e); }
+  };
+
+  if (!profile) return <div className="p-10 text-center">Loading...</div>;
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto">
+       <div className="bg-white dark:bg-[#1a2c2f] rounded-2xl shadow-sm border border-gray-200 dark:border-[#224449] overflow-hidden mb-8">
+          <div className="h-32 bg-gradient-to-r from-blue-600 to-primary"></div>
+          <div className="px-8 pb-8">
+             <div className="flex flex-col md:flex-row justify-between items-end -mt-12 mb-6">
+                <div className="flex items-end gap-6">
+                   <div className="relative">
+                      <div className="w-32 h-32 rounded-2xl bg-white dark:bg-[#1a2c2f] p-1 shadow-lg">
+                         <div className="w-full h-full rounded-xl bg-cover bg-center bg-gray-200" style={{backgroundImage: `url("${getAvatarUrl(profile.avatar)}")`}}></div>
+                      </div>
+                      <button 
+                        onClick={() => fileRef.current?.click()}
+                        className="absolute bottom-2 right-2 bg-white dark:bg-[#102023] p-1.5 rounded-lg shadow-md hover:bg-gray-50 cursor-pointer"
+                      >
+                         <span className="material-symbols-outlined text-gray-600 dark:text-gray-300 text-sm">{uploading ? 'sync' : 'edit'}</span>
+                      </button>
+                      <input type="file" hidden ref={fileRef} onChange={handleUpload} accept="image/*" />
+                   </div>
+                   <div className="mb-2">
+                      <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{profile.user_id?.name}</h1>
+                      <p className="text-gray-500 dark:text-gray-400">{profile.specialty_id?.name}</p>
+                   </div>
+                </div>
+                <div className="flex gap-3 mb-2 md:mb-0">
+                    <button 
+                      onClick={toggleAvailability} 
+                      className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${profile.isAvailable ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}
+                    >
+                       {profile.isAvailable ? 'Available' : 'Set Busy'}
+                    </button>
+                    <button className="px-4 py-2 bg-primary text-white rounded-lg font-medium text-sm hover:bg-primary/90 shadow-md">
+                       Edit Profile
+                    </button>
+                </div>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="md:col-span-2 space-y-8">
+                   <section>
+                      <h3 className="font-bold text-gray-900 dark:text-white text-lg mb-4 flex items-center gap-2">
+                         <span className="material-symbols-outlined text-primary">person</span> Personal Info
+                      </h3>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                         <div className="p-4 rounded-xl bg-gray-50 dark:bg-[#102023]">
+                            <p className="text-gray-500 dark:text-gray-400 mb-1">Email</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{profile.user_id?.email}</p>
+                         </div>
+                         <div className="p-4 rounded-xl bg-gray-50 dark:bg-[#102023]">
+                            <p className="text-gray-500 dark:text-gray-400 mb-1">Phone</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{profile.user_id?.phoneNumber}</p>
+                         </div>
+                         <div className="p-4 rounded-xl bg-gray-50 dark:bg-[#102023]">
+                            <p className="text-gray-500 dark:text-gray-400 mb-1">Gender</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{profile.user_id?.gender}</p>
+                         </div>
+                         <div className="p-4 rounded-xl bg-gray-50 dark:bg-[#102023]">
+                            <p className="text-gray-500 dark:text-gray-400 mb-1">Experience</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{profile.years_of_experience} Years</p>
+                         </div>
+                      </div>
+                   </section>
+
+                   <section>
+                      <h3 className="font-bold text-gray-900 dark:text-white text-lg mb-4 flex items-center gap-2">
+                         <span className="material-symbols-outlined text-primary">school</span> Education & Bio
+                      </h3>
+                      <div className="bg-gray-50 dark:bg-[#102023] p-5 rounded-xl space-y-4">
+                          <div>
+                             <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">About</p>
+                             <p className="text-gray-800 dark:text-gray-200 text-sm leading-relaxed">{profile.bio || 'No bio provided.'}</p>
+                          </div>
+                          {profile.education && (
+                             <div>
+                                <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Education</p>
+                                <ul className="list-disc list-inside text-sm text-gray-800 dark:text-gray-200">
+                                   {profile.education.map((e, i) => <li key={i}>{e}</li>)}
+                                </ul>
+                             </div>
+                          )}
+                      </div>
+                   </section>
+                </div>
+                
+                <div className="space-y-6">
+                   <div className="bg-blue-50 dark:bg-blue-900/10 p-5 rounded-xl">
+                      <h4 className="font-bold text-blue-900 dark:text-blue-100 mb-2">Consultation Fee</h4>
+                      <p className="text-3xl font-bold text-primary">${profile.consultation_fee}</p>
+                      <p className="text-xs text-blue-600 dark:text-blue-300 mt-1">Per session (approx 30 mins)</p>
+                   </div>
+
+                   <div className="bg-white dark:bg-[#1a2c2f] border border-gray-200 dark:border-[#224449] rounded-xl p-5">
+                      <h4 className="font-bold text-gray-900 dark:text-white mb-4">License</h4>
+                      <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-[#102023] rounded-lg">
+                         <span className="material-symbols-outlined text-gray-400">badge</span>
+                         <div>
+                            <p className="text-xs text-gray-500">Number</p>
+                            <p className="font-mono text-sm font-bold">{profile.license_number}</p>
+                         </div>
+                      </div>
+                   </div>
+                </div>
+             </div>
+          </div>
+       </div>
+    </div>
+  );
+};
+
+export default Profile;
