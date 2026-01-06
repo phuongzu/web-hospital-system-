@@ -13,7 +13,7 @@ interface Drug {
   };
   unit?: string;
   price?: number;
-  stock?: number;
+  stock_quantity?: number; // FIXED: Matches backend model
 }
 
 interface PrescriptionItem {
@@ -59,20 +59,31 @@ const COMMON_INSTRUCTIONS = [
   "Apply to affected area"
 ];
 
+const SEVERITY_LEVELS = ["low", "medium", "high", "critical"];
+
 const ConsultationDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [consultation, setConsultation] = useState<Consultation | null>(null);
-  const [showAddStepModal, setShowAddStepModal] = useState(false);
+  const [showStepModal, setShowStepModal] = useState(false); // Renamed from showAddStepModal
+  const [editingStepNumber, setEditingStepNumber] = useState<number | null>(null); // Track which step is being edited
+  const [showEditModal, setShowEditModal] = useState(false);
   
   // Drug Inventory State
   const [availableDrugs, setAvailableDrugs] = useState<Drug[]>([]);
   const [loadingDrugs, setLoadingDrugs] = useState(false);
 
-  // Form State
+  // Form State for Steps
   const [stepForm, setStepForm] = useState({
     title: '',
     description: '',
     prescriptions: [] as PrescriptionItem[]
+  });
+
+  // Form State for Editing Consultation
+  const [editForm, setEditForm] = useState({
+    diagnosis: '',
+    severity: '',
+    notes: ''
   });
   
   const doctorId = getDoctorId();
@@ -133,7 +144,63 @@ const ConsultationDetail: React.FC = () => {
     window.print();
   };
 
-  // Prescription Handlers
+  // --- Edit Consultation Handlers ---
+
+  const handleOpenEdit = () => {
+    if (consultation) {
+        setEditForm({
+            diagnosis: consultation.diagnosis || '',
+            severity: consultation.severity || 'low',
+            notes: consultation.notes || ''
+        });
+        setShowEditModal(true);
+    }
+  };
+
+  const handleUpdateConsultation = async () => {
+      if (!id) return;
+      try {
+          const response = await fetch(`${API_BASE_URL}/doctors/consultations/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(editForm)
+          });
+          const data = await response.json();
+          if (data.success) {
+              setShowEditModal(false);
+              fetchConsultation();
+          } else {
+              alert(data.message || 'Failed to update consultation');
+          }
+      } catch (e) {
+          console.error(e);
+          alert('Error updating consultation');
+      }
+  };
+
+  // --- Delete Step Handler ---
+  const handleDeleteStep = async (stepNumber: number) => {
+    if (!id) return;
+    if (!window.confirm('Are you sure you want to delete this step? This will restore medication stock if applicable.')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/doctors/consultations/${id}/steps/${stepNumber}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        if (data.success) {
+            fetchConsultation();
+            fetchDrugs(); // Update stock display
+        } else {
+            alert(data.message || 'Failed to delete step');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error deleting step');
+    }
+  };
+
+  // --- Prescription Handlers ---
   const addPrescription = () => {
     setStepForm(prev => ({
       ...prev,
@@ -173,58 +240,109 @@ const ConsultationDetail: React.FC = () => {
     });
   };
 
+  // --- Step Modal Handlers (Add & Edit) ---
+
   const handleOpenAddStep = () => {
+      setEditingStepNumber(null);
       setStepForm({
           title: '',
           description: '',
           prescriptions: [{ medication: '', dosage: '', duration: '', instructions: '' }]
       });
-      setShowAddStepModal(true);
+      setShowStepModal(true);
   };
 
-  const handleAddStep = async () => {
+  const handleOpenEditStep = (step: any) => {
+      setEditingStepNumber(step.stepNumber);
+      
+      // Parse prescriptions from strings back to objects
+      const medications = step.medication ? step.medication.split(' + ') : [];
+      
+      const parseField = (fullString: string | undefined, medName: string) => {
+          if (!fullString) return '';
+          const parts = fullString.split(' | ');
+          const prefix = `${medName}: `;
+          const found = parts.find(p => p.trim().startsWith(prefix));
+          return found ? found.substring(prefix.length) : '';
+      };
+
+      const prescriptions = medications.map((med: string) => ({
+          medication: med,
+          dosage: parseField(step.dosage, med),
+          duration: parseField(step.duration, med),
+          instructions: parseField(step.instructions, med)
+      }));
+
+      // If no prescriptions found (only title/desc), ensure at least one empty row if needed
+      // or keep empty if that's the intention. Here we add one empty if list is empty to allow adding.
+      const finalPrescriptions = prescriptions.length > 0 ? prescriptions : 
+          [{ medication: '', dosage: '', duration: '', instructions: '' }];
+
+      setStepForm({
+          title: step.title || '',
+          description: step.description || '',
+          prescriptions: finalPrescriptions
+      });
+      setShowStepModal(true);
+  };
+
+  const handleSaveStep = async () => {
       if (!id || !stepForm.title.trim()) {
           alert("Title is required");
           return;
       }
 
-      // Validate prescriptions
-      const hasInvalidPrescription = stepForm.prescriptions.some(p => !p.medication || !p.dosage);
+      // Validate prescriptions if any exist
+      const hasInvalidPrescription = stepForm.prescriptions.some(p => p.medication && !p.dosage);
       if (hasInvalidPrescription) {
-        alert('Please select medication and dosage for all prescription items.');
+        alert('Please select dosage for all prescription items.');
         return;
       }
 
       try {
-          // Format prescriptions to strings for backend
-          const prescriptions = stepForm.prescriptions;
-          const combinedMedication = prescriptions.map(p => p.medication).join(' + ');
-          const combinedDosage = prescriptions.map(p => p.dosage ? `${p.medication}: ${p.dosage}` : '').filter(Boolean).join(' | ');
-          const combinedDuration = prescriptions.map(p => p.duration ? `${p.medication}: ${p.duration}` : '').filter(Boolean).join(' | ');
-          const combinedInstructions = prescriptions.map(p => p.instructions ? `${p.medication}: ${p.instructions}` : '').filter(Boolean).join(' | ');
+          // Format prescriptions to strings for backend (for legacy display)
+          const validPrescriptions = stepForm.prescriptions.filter(p => p.medication);
+          const combinedMedication = validPrescriptions.map(p => p.medication).join(' + ');
+          const combinedDosage = validPrescriptions.map(p => `${p.medication}: ${p.dosage}`).join(' | ');
+          const combinedDuration = validPrescriptions.map(p => p.duration ? `${p.medication}: ${p.duration}` : '').filter(Boolean).join(' | ');
+          const combinedInstructions = validPrescriptions.map(p => p.instructions ? `${p.medication}: ${p.instructions}` : '').filter(Boolean).join(' | ');
 
-          const response = await fetch(`${API_BASE_URL}/doctors/consultations/${id}/steps`, {
-              method: 'POST',
+          const payload = {
+              title: stepForm.title,
+              description: stepForm.description,
+              medication: combinedMedication,
+              dosage: combinedDosage,
+              duration: combinedDuration,
+              instructions: combinedInstructions,
+              prescriptions: validPrescriptions // Sending structured data for stock management
+          };
+
+          let url = `${API_BASE_URL}/doctors/consultations/${id}/steps`;
+          let method = 'POST';
+
+          if (editingStepNumber !== null) {
+              url = `${API_BASE_URL}/doctors/consultations/${id}/steps/${editingStepNumber}`;
+              method = 'PUT';
+          }
+
+          const response = await fetch(url, {
+              method: method,
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  title: stepForm.title,
-                  description: stepForm.description,
-                  medication: combinedMedication,
-                  dosage: combinedDosage,
-                  duration: combinedDuration,
-                  instructions: combinedInstructions
-              })
+              body: JSON.stringify(payload)
           });
+          
           const data = await response.json();
           if (data.success) {
-              setShowAddStepModal(false);
+              setShowStepModal(false);
               fetchConsultation();
+              // Re-fetch drugs to update stock display immediately
+              fetchDrugs();
           } else {
-              alert(data.message || 'Failed to add step');
+              alert(data.message || 'Failed to save step');
           }
       } catch (e) {
           console.error(e);
-          alert('Error adding step');
+          alert('Error saving step');
       }
   };
 
@@ -301,17 +419,40 @@ const ConsultationDetail: React.FC = () => {
                                     <h3 className="font-bold text-gray-900 dark:text-white">{step.title}</h3>
                                     <p className="text-sm text-gray-500 dark:text-[#8fc4cc]">Step {step.stepNumber}</p>
                                 </div>
-                                <span className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-300 text-xs font-bold px-2 py-0.5 rounded-full capitalize">
-                                    {step.status.replace('-', ' ')}
-                                </span>
+                                <div className="flex items-center gap-2">
+                                    <span className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-300 text-xs font-bold px-2 py-0.5 rounded-full capitalize">
+                                        {step.status.replace('-', ' ')}
+                                    </span>
+                                    {consultation.consultation_status !== 'completed' && (
+                                        <>
+                                            <button 
+                                                onClick={() => handleOpenEditStep(step)}
+                                                className="p-1 text-gray-400 hover:text-primary transition-colors"
+                                                title="Edit Step"
+                                            >
+                                                <span className="material-symbols-outlined text-sm">edit</span>
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDeleteStep(step.stepNumber)}
+                                                className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                                                title="Delete Step"
+                                            >
+                                                <span className="material-symbols-outlined text-sm">delete</span>
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                             <p className="text-gray-600 dark:text-gray-300 mb-3">{step.description}</p>
                             
                             {step.medication && (
-                                <div className="text-sm mb-2 text-gray-700 dark:text-gray-300">
+                                <div className="text-sm mb-2 text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-[#1a2c2f] p-3 rounded-lg border border-gray-100 dark:border-[#224449]">
                                     <strong>Medication:</strong> {step.medication}
-                                    {step.dosage && ` (${step.dosage})`}
-                                    {step.duration && ` - ${step.duration}`}
+                                    <div className="mt-1 text-xs text-gray-500">
+                                        {step.dosage && <div>Dosage: {step.dosage}</div>}
+                                        {step.duration && <div>Duration: {step.duration}</div>}
+                                        {step.instructions && <div className="italic mt-1">Note: {step.instructions}</div>}
+                                    </div>
                                 </div>
                             )}
 
@@ -344,11 +485,20 @@ const ConsultationDetail: React.FC = () => {
             </div>
 
             <div className="bg-white dark:bg-[#102023] p-5 rounded-xl shadow-sm border border-gray-100 dark:border-[#224449]">
-                <h3 className="font-bold text-lg text-gray-900 dark:text-white mb-4">Info</h3>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-lg text-gray-900 dark:text-white">Info</h3>
+                    <button 
+                        onClick={handleOpenEdit}
+                        className="text-gray-400 hover:text-primary dark:text-gray-500 dark:hover:text-white transition-colors p-1 rounded-full hover:bg-gray-100 dark:hover:bg-[#1a2c2f]"
+                        title="Edit Consultation"
+                    >
+                        <span className="material-symbols-outlined text-sm">edit</span>
+                    </button>
+                </div>
                 <div className="space-y-4">
                     <div className="flex justify-between border-t border-gray-100 dark:border-[#224449] pt-3">
                         <span className="text-sm text-gray-500 dark:text-gray-400">Diagnosis</span>
-                        <span className="text-sm font-medium text-gray-900 dark:text-white">{consultation.diagnosis}</span>
+                        <span className="text-sm font-medium text-gray-900 dark:text-white text-right ml-2">{consultation.diagnosis}</span>
                     </div>
                     <div className="flex justify-between border-t border-gray-100 dark:border-[#224449] pt-3">
                         <span className="text-sm text-gray-500 dark:text-gray-400">Severity</span>
@@ -363,13 +513,73 @@ const ConsultationDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* Add Step Modal */}
-      {showAddStepModal && (
+      {/* Edit Consultation Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+             <div className="bg-white dark:bg-[#102023] rounded-2xl shadow-2xl max-w-lg w-full my-auto flex flex-col animate-in fade-in zoom-in duration-200">
+                <div className="flex justify-between items-center p-6 border-b border-gray-100 dark:border-[#224449]">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">Edit Consultation Info</h2>
+                    <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                
+                <div className="p-6 space-y-6">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Diagnosis <span className="text-red-500">*</span></label>
+                        <input 
+                            className="w-full rounded-lg border-gray-200 dark:border-[#224449] bg-gray-50 dark:bg-[#1a2c2f] p-3 text-sm dark:text-white focus:ring-2 focus:ring-primary outline-none"
+                            placeholder="e.g. Viral Fever"
+                            value={editForm.diagnosis}
+                            onChange={(e) => setEditForm({...editForm, diagnosis: e.target.value})}
+                        />
+                    </div>
+                    
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Severity</label>
+                        <div className="relative">
+                            <select 
+                                className="w-full rounded-lg border-gray-200 dark:border-[#224449] bg-white dark:bg-[#1a2c2f] p-3 pr-10 text-sm dark:text-white focus:ring-2 focus:ring-primary outline-none appearance-none cursor-pointer capitalize"
+                                value={editForm.severity}
+                                onChange={(e) => setEditForm({...editForm, severity: e.target.value})}
+                            >
+                                {SEVERITY_LEVELS.map(level => (
+                                    <option key={level} value={level} className="capitalize">{level}</option>
+                                ))}
+                            </select>
+                            <span className="material-symbols-outlined absolute right-3 top-3 text-gray-500 pointer-events-none text-sm">expand_more</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Notes</label>
+                        <textarea 
+                            className="w-full rounded-lg border-gray-200 dark:border-[#224449] bg-gray-50 dark:bg-[#1a2c2f] p-3 text-sm dark:text-white focus:ring-2 focus:ring-primary outline-none resize-none"
+                            rows={4}
+                            placeholder="Additional observation notes..."
+                            value={editForm.notes}
+                            onChange={(e) => setEditForm({...editForm, notes: e.target.value})}
+                        />
+                    </div>
+                </div>
+
+                <div className="p-6 border-t border-gray-100 dark:border-[#224449] bg-gray-50 dark:bg-[#1a2c2f]/50 flex justify-end gap-3">
+                    <button onClick={() => setShowEditModal(false)} className="px-5 py-2.5 rounded-xl text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-200 dark:hover:bg-white/10 transition-colors">Cancel</button>
+                    <button onClick={handleUpdateConsultation} className="px-5 py-2.5 rounded-xl bg-primary text-white font-bold hover:bg-primary/90 shadow-lg shadow-primary/30">Save Changes</button>
+                </div>
+             </div>
+        </div>
+      )}
+
+      {/* Add/Edit Step Modal */}
+      {showStepModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
             <div className="bg-white dark:bg-[#102023] rounded-2xl shadow-2xl max-w-4xl w-full my-auto flex flex-col animate-in fade-in zoom-in duration-200">
                 <div className="flex justify-between items-center p-6 border-b border-gray-100 dark:border-[#224449]">
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">Add Treatment Step</h2>
-                    <button onClick={() => setShowAddStepModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                        {editingStepNumber !== null ? `Edit Step ${editingStepNumber}` : 'Add Treatment Step'}
+                    </h2>
+                    <button onClick={() => setShowStepModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white">
                         <span className="material-symbols-outlined">close</span>
                     </button>
                 </div>
@@ -428,7 +638,7 @@ const ConsultationDetail: React.FC = () => {
                                          <option value="">-- Select Medication --</option>
                                          {availableDrugs.map(drug => (
                                            <option key={drug._id} value={drug.name}>
-                                             {drug.name} {drug.unit ? `(${drug.unit})` : ''} {drug.stock ? `- ${drug.stock} left` : ''}
+                                             {drug.name} {drug.unit ? `(${drug.unit})` : ''} {drug.stock_quantity !== undefined ? `- ${drug.stock_quantity} left` : ''}
                                            </option>
                                          ))}
                                      </select>
@@ -510,8 +720,10 @@ const ConsultationDetail: React.FC = () => {
                 </div>
                 
                 <div className="p-6 border-t border-gray-100 dark:border-[#224449] bg-gray-50 dark:bg-[#1a2c2f]/50 flex justify-end gap-3">
-                    <button onClick={() => setShowAddStepModal(false)} className="px-5 py-2.5 rounded-xl text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-200 dark:hover:bg-white/10 transition-colors">Cancel</button>
-                    <button onClick={handleAddStep} className="px-5 py-2.5 rounded-xl bg-primary text-white font-bold hover:bg-primary/90 shadow-lg shadow-primary/30">Add Step</button>
+                    <button onClick={() => setShowStepModal(false)} className="px-5 py-2.5 rounded-xl text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-200 dark:hover:bg-white/10 transition-colors">Cancel</button>
+                    <button onClick={handleSaveStep} className="px-5 py-2.5 rounded-xl bg-primary text-white font-bold hover:bg-primary/90 shadow-lg shadow-primary/30">
+                        {editingStepNumber !== null ? 'Save Changes' : 'Add Step'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -560,7 +772,6 @@ const ConsultationDetail: React.FC = () => {
                 <span className="text-4xl font-serif italic font-bold">Rx</span>
                 <span className="text-sm text-gray-500 uppercase font-bold tracking-wider mt-2">Treatment Plan</span>
              </div>
-             
              <div className="space-y-6">
                  {consultation.treatment_plan.map((step, i) => (
                      <div key={i} className="border-l-4 border-gray-300 pl-4 py-1">

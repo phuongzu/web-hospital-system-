@@ -18,6 +18,7 @@ import ConsultationList from './pages/ConsultationList';
 import ConsultationDetail from './pages/ConsultationDetail';
 import Messages from './pages/Messages';
 import Profile from './pages/Profile';
+import Drugs from './pages/Drugs';
 
 const theme = createTheme({
   palette: {
@@ -82,6 +83,7 @@ const App: React.FC = () => {
             <Route path="patients/:id" element={<PatientDetail />} />
             <Route path="appointments" element={<Appointments />} />
             <Route path="consultations" element={<ConsultationList />} />
+            <Route path = "Drugs" element={<Drugs/>}/>
             <Route path="consultations/:id" element={<ConsultationDetail />} />
             <Route path="messages" element={<Messages />} />
             <Route path="profile" element={<Profile />} />
