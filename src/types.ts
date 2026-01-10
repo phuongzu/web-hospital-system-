@@ -49,7 +49,7 @@ export interface Patient {
   _id: string;
   name?: string;
   phoneNumber?: string;
-  bloodGroup?: string;
+  blood_type?: string;
   allergies?: string[];
   dateOfBirth?: string;
   gender?: string;
@@ -61,6 +61,8 @@ export interface Stat {
   count: number;
 }
 
+export type StepStatus = 'pending' | 'in-progress' | 'completed' | 'approved' | 'rejected';
+
 export interface TreatmentStep {
   stepNumber: number;
   title: string;
@@ -69,9 +71,18 @@ export interface TreatmentStep {
   dosage?: string;
   duration?: string;
   instructions?: string;
-  status: 'pending' | 'in-progress' | 'completed' | 'approved';
-  completedAt?: string;
-  patientMessage?: string;
+  status: StepStatus;
+  completedAt?: Date | string;
+  approvedAt?: Date | string;
+  startedAt?: Date | string;
+  approval_requested?: boolean;
+  requires_followup?: boolean;
+  followup_reason?: string;
+  condition_description?: string;
+  patient_message?: string;
+  doctorNotes?: string;
+  _id?: string;
+
 }
 
 export interface MedicalRecord {
@@ -135,13 +146,20 @@ export interface Conversation {
 
 export interface Notification {
   _id: string;
+  user_id: string;
   doctor_id: string;
   title: string;
   message: string;
   type: string;
   isRead: boolean;
   createdAt: string;
+  data?: {
+    action_url?: string;
+    action_label?: string;
+    [key: string]: any;
+  };
 }
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -314,7 +332,9 @@ export interface User {
   gender?: string;
   role?: string;
   avatar?: string;
-  bloodGroup?: string;
+  avatarUrl?: string;
+  address: string;
+  blood_type?: string; // Từ UserInformation (mới)
   allergies?: string[];
   status?: string;
 }
@@ -334,6 +354,8 @@ export interface Consultation {
   created_at: string;
   updated_at: string;
   isActive?: boolean;
+  next_appointment?: string;
+  follow_up_instructions?: string;
 }
 
 
@@ -368,3 +390,4 @@ export interface Drug {
   created_at: string;
   updated_at: string;
 }
+

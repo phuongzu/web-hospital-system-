@@ -73,7 +73,7 @@ const PatientDetail: React.FC = () => {
                             { label: 'Gender', value: patient?.gender },
                             { label: 'Phone', value: patient?.phoneNumber },
                             { label: 'Email', value: patient?.email },
-                            { label: 'Blood Group', value: patient?.bloodGroup || 'N/A' },
+                            { label: 'Blood Group', value: patient?.blood_type || 'N/A' },
                         ].map((item, i) => (
                             <div key={i} className="flex flex-col gap-1 border-b border-gray-100 dark:border-[#224449] pb-3 last:border-0">
                                 <span className="text-gray-500 dark:text-gray-400 text-sm">{item.label}</span>
@@ -245,7 +245,7 @@ const PatientDetail: React.FC = () => {
                  <p className="text-gray-500 dark:text-gray-400">
                     {patient?.dateOfBirth ? `${calculateAge(patient.dateOfBirth)} years old` : 'Age N/A'}, {patient?.gender}
                  </p>
-                 <p className="text-gray-500 dark:text-gray-400">Blood Group: <span className="font-semibold text-gray-900 dark:text-white">{patient?.bloodGroup || 'N/A'}</span></p>
+                 <p className="text-gray-500 dark:text-gray-400">Blood Group: <span className="font-semibold text-gray-900 dark:text-white">{patient?.blood_type || 'N/A'}</span></p>
               </div>
             </div>
           </div>

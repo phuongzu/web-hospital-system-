@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Appointment } from '../types';
-import { getDoctorId, API_BASE_URL, getAvatarUrl, calculateAge } from '../utils/api';
+import { getDoctorId, API_BASE_URL, getAvatarUrl, calculateAge, getInitials } from '../utils/api';
 
 // Interfaces for local state
 interface Drug {
@@ -58,6 +58,64 @@ const COMMON_INSTRUCTIONS = [
   "Apply to affected area"
 ];
 
+// Avatar Component đã sửa logic
+const Avatar: React.FC<{ 
+  avatarPath?: string; 
+  name?: string; 
+  size?: 'sm' | 'md' | 'lg' | 'xl'; 
+  className?: string;
+  rounded?: boolean;
+}> = ({ 
+  avatarPath, 
+  name, 
+  size = 'md',
+  className = '',
+  rounded = true
+}) => {
+  const sizeClasses = {
+    sm: 'size-8',
+    md: 'size-12',
+    lg: 'size-16',
+    xl: 'size-20'
+  };
+  
+  const textSizes = {
+    sm: 'text-xs',
+    md: 'text-sm',
+    lg: 'text-lg',
+    xl: 'text-2xl'
+  };
+  
+  const avatarUrl = getAvatarUrl(avatarPath);
+  const initials = getInitials(name);
+  
+  // Kiểm tra thực sự có avatar hay không (không phải default)
+  const hasRealAvatar = avatarPath && 
+    avatarPath !== 'undefined' && 
+    avatarPath !== 'null' && 
+    avatarPath.trim() !== '' &&
+    !avatarUrl.includes('aida-public'); // Kiểm tra không phải default Google avatar
+  
+  const shapeClass = rounded ? 'rounded-full' : 'rounded-2xl';
+  
+  return (
+    <div className={`${sizeClasses[size]} ${shapeClass} overflow-hidden bg-gray-200 dark:bg-gray-800 ${className}`}>
+      {hasRealAvatar ? (
+        <div 
+          className="size-full bg-cover bg-center"
+          style={{ backgroundImage: `url('${avatarUrl}')` }}
+        />
+      ) : (
+        <div className="size-full flex items-center justify-center bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900/30 dark:to-blue-800/30">
+          <span className={`${textSizes[size]} font-bold text-blue-600 dark:text-blue-400`}>
+            {initials}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Appointments: React.FC = () => {
   const navigate = useNavigate();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -84,8 +142,8 @@ const Appointments: React.FC = () => {
     severity: 'mild',
     notes: '',
     initialStep: {
-      title: '',
-      description: '',
+      title: 'Initial Prescription',
+      description: 'Begin medication course immediately',
       prescriptions: [] as PrescriptionItem[] 
     }
   });
@@ -93,13 +151,30 @@ const Appointments: React.FC = () => {
   const doctorId = getDoctorId();
 
   const fetchAppointments = async () => {
-    if (!doctorId) return;
+    if (!doctorId) {
+      console.error('No doctor ID found');
+      return;
+    }
+    
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments`);
+      console.log('Fetching appointments for doctor:', doctorId);
+      
+      const token = localStorage.getItem('token') || '';
+      const response = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
       const data = await response.json();
+      console.log('Appointments API response:', data);
+      
       if (data.success) {
         setAppointments(data.data || []);
+      } else {
+        console.error('Failed to fetch appointments:', data.message);
       }
     } catch (error) {
       console.error("Error fetching appointments:", error);
@@ -111,7 +186,13 @@ const Appointments: React.FC = () => {
   const fetchDrugs = async () => {
     try {
       setLoadingDrugs(true);
-      const response = await fetch(`${API_BASE_URL}/doctors/drugs`);
+      const token = localStorage.getItem('token') || '';
+      const response = await fetch(`${API_BASE_URL}/doctors/drugs`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
       const data = await response.json();
       if (data.success) {
         setAvailableDrugs(data.data || []);
@@ -129,11 +210,20 @@ const Appointments: React.FC = () => {
   }, [doctorId]);
 
   const handleAction = async (id: string, action: 'confirm' | 'cancel' | 'complete') => {
+    if (!doctorId) {
+      alert('Doctor ID not found. Please log in again.');
+      return;
+    }
+    
     try {
       setActionLoading(id);
+      const token = localStorage.getItem('token') || '';
       const response = await fetch(`${API_BASE_URL}/doctors/appointments/${id}/${action}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ doctorId })
       });
       
@@ -148,6 +238,7 @@ const Appointments: React.FC = () => {
       }
     } catch (error) {
       console.error(`Error ${action} appointment:`, error);
+      alert('An error occurred. Please try again.');
     } finally {
       setActionLoading('');
     }
@@ -192,13 +283,15 @@ const Appointments: React.FC = () => {
   };
 
   const removePrescription = (index: number) => {
-    setConsultForm(prev => ({
-      ...prev,
-      initialStep: {
-        ...prev.initialStep,
-        prescriptions: prev.initialStep.prescriptions.filter((_, i) => i !== index)
-      }
-    }));
+    if (consultForm.initialStep.prescriptions.length > 1) {
+      setConsultForm(prev => ({
+        ...prev,
+        initialStep: {
+          ...prev.initialStep,
+          prescriptions: prev.initialStep.prescriptions.filter((_, i) => i !== index)
+        }
+      }));
+    }
   };
 
   const updatePrescription = (index: number, field: keyof PrescriptionItem, value: string) => {
@@ -226,7 +319,11 @@ const Appointments: React.FC = () => {
   };
 
   const submitConsultation = async () => {
-    if (!selectedAppointment || !doctorId) return;
+    if (!selectedAppointment || !doctorId) {
+      alert('Missing appointment or doctor ID');
+      return;
+    }
+    
     if (!consultForm.diagnosis.trim()) {
       alert('Please enter a diagnosis');
       return;
@@ -246,9 +343,13 @@ const Appointments: React.FC = () => {
       const combinedDuration = prescriptions.map(p => p.duration ? `${p.medication}: ${p.duration}` : '').filter(Boolean).join(' | ');
       const combinedInstructions = prescriptions.map(p => p.instructions ? `${p.medication}: ${p.instructions}` : '').filter(Boolean).join(' | ');
 
+      const token = localStorage.getItem('token') || '';
       const response = await fetch(`${API_BASE_URL}/doctors/consultations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           appointment_id: selectedAppointment._id,
           patient_id: selectedAppointment.user_id?._id,
@@ -276,11 +377,11 @@ const Appointments: React.FC = () => {
            navigate(`/consultations/${data.data._id}`);
         }
       } else {
-        alert('Failed to start consultation: ' + data.message);
+        alert('Failed to start consultation: ' + (data.message || 'Unknown error'));
       }
     } catch (error) {
       console.error('Error creating consultation:', error);
-      alert('Error starting consultation');
+      alert('Error starting consultation. Please check your connection.');
     }
   };
 
@@ -363,7 +464,7 @@ const Appointments: React.FC = () => {
            currentDate.getFullYear() === selectedDate.getFullYear();
   };
 
-  const formatTime = (dateString: string, timeSlot: string) => {
+  const formatAppointmentDate = (dateString: string) => {
     try {
         const d = new Date(dateString);
         return d.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'});
@@ -371,6 +472,19 @@ const Appointments: React.FC = () => {
         return dateString;
     }
   };
+
+  // Debug: Log appointments data
+  useEffect(() => {
+    if (appointments.length > 0) {
+      console.log('Appointments loaded:', appointments.map(app => ({
+        id: app._id,
+        patient: app.user_id?.name,
+        avatar: app.user_id?.avatar,
+        status: app.status,
+        date: app.appointment_date
+      })));
+    }
+  }, [appointments]);
 
   return (
     <div className="p-8 max-w-[1600px] mx-auto min-h-screen bg-gray-50/50 dark:bg-[#0b1619]">
@@ -523,7 +637,8 @@ const Appointments: React.FC = () => {
                 </div>
             ) : (
                 <div className="space-y-0">
-                    {sortedAppointments.map((app, index) => (
+                    {sortedAppointments.map((app, index) => {
+                      return (
                         <div key={app._id} className="relative pl-8 pb-8 last:pb-0 border-l-2 border-dashed border-gray-200 dark:border-[#224449] group">
                             {/* Timeline Dot */}
                             <div className={`absolute -left-[9px] top-0 size-4 rounded-full border-4 border-white dark:border-[#102023] transition-colors ${
@@ -537,29 +652,30 @@ const Appointments: React.FC = () => {
                                 {/* Time Column */}
                                 <div className="min-w-[100px] md:text-right">
                                     <p className="font-bold text-lg text-gray-900 dark:text-white">{app.time_slot}</p>
-                                    <p className="text-xs font-bold text-gray-400 uppercase">{formatTime(app.appointment_date, '')}</p>
+                                    <p className="text-xs font-bold text-gray-400 uppercase">{formatAppointmentDate(app.appointment_date)}</p>
                                 </div>
 
                                 {/* Content */}
                                 <div className="flex-1 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between w-full">
                                     
                                     {/* Patient Info */}
-                                    <div className="flex items-center gap-4 cursor-pointer" onClick={() => openAppointmentDetails(app)}>
-                                        <div 
-                                            className="size-12 rounded-xl bg-cover bg-center bg-gray-200 dark:bg-gray-800" 
-                                            style={{backgroundImage: `url('${getAvatarUrl(app.user_id?.avatar)}')`}}
-                                        />
-                                        <div>
-                                            <h3 className="font-bold text-gray-900 dark:text-white text-lg group-hover:text-primary transition-colors">
-                                                {app.user_id?.name || 'Unknown Patient'}
-                                            </h3>
-                                            <div className="flex items-center gap-2 text-sm text-gray-500">
-                                                <span className="bg-gray-100 dark:bg-[#224449] px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide">
-                                                    {app.reason || 'Consultation'}
-                                                </span>
-                                            </div>
-                                        </div>
+                                  <div className="flex items-center gap-4 cursor-pointer" onClick={() => openAppointmentDetails(app)}>
+                                    <Avatar 
+                                      avatarPath={app.user_id?.avatar}
+                                      name={app.user_id?.name}
+                                      size="md"
+                                    />
+                                    <div>
+                                      <h3 className="font-bold text-gray-900 dark:text-white text-lg group-hover:text-primary transition-colors">
+                                        {app.user_id?.name || 'Unknown Patient'}
+                                      </h3>
+                                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                                        <span className="bg-gray-100 dark:bg-[#224449] px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide">
+                                          {app.reason || 'Consultation'}
+                                        </span>
+                                      </div>
                                     </div>
+                                  </div>
 
                                     {/* Actions */}
                                     <div className="flex items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
@@ -571,7 +687,9 @@ const Appointments: React.FC = () => {
                                                     disabled={actionLoading === app._id}
                                                     className="flex-1 md:flex-none px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-black rounded-lg text-sm font-bold hover:bg-primary hover:border-primary transition-all shadow-lg shadow-gray-200 dark:shadow-none"
                                                 >
-                                                    {actionLoading === app._id ? '...' : 'Confirm'}
+                                                    {actionLoading === app._id ? (
+                                                      <span className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white dark:border-black"></span>
+                                                    ) : 'Confirm'}
                                                 </button>
                                                 <button 
                                                     onClick={() => handleAction(app._id, 'cancel')}
@@ -613,24 +731,31 @@ const Appointments: React.FC = () => {
                                 </div>
                             </div>
                         </div>
-                    ))}
+                      );
+                    })}
                 </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Appointment Detail Modal (Re-skinned) */}
+      {/* Appointment Detail Modal */}
       {showDetailModal && selectedAppointment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
            <div className="bg-white dark:bg-[#102023] rounded-3xl shadow-2xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in duration-200 border border-gray-100 dark:border-[#224449]">
-              <div className="p-6 pb-0 flex justify-between items-start">
-                 <div className="size-20 rounded-2xl bg-cover bg-center shadow-inner" style={{backgroundImage: `url('${getAvatarUrl(selectedAppointment.user_id?.avatar)}')`}}></div>
-                 <button onClick={() => setShowDetailModal(false)} className="size-8 rounded-full bg-gray-100 dark:bg-[#1a2c2f] flex items-center justify-center text-gray-500 hover:bg-gray-200 transition-colors">
+              {/* Modal Header Image */}
+                <div className="p-6 pb-0 flex justify-between items-start">
+                  <Avatar 
+                    avatarPath={selectedAppointment.user_id?.avatar}
+                    name={selectedAppointment.user_id?.name}
+                    size="xl"
+                    className="rounded-2xl"
+                    rounded={false}
+                  />
+                  <button onClick={() => setShowDetailModal(false)} className="size-8 rounded-full bg-gray-100 dark:bg-[#1a2c2f] flex items-center justify-center text-gray-500 hover:bg-gray-200 transition-colors">
                     <span className="material-symbols-outlined text-sm">close</span>
-                 </button>
-              </div>
-              
+                  </button>
+                </div>
               <div className="p-6">
                  <h2 className="text-2xl font-black text-gray-900 dark:text-white leading-tight mb-1">{selectedAppointment.user_id?.name || 'Unknown'}</h2>
                  <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
@@ -645,7 +770,7 @@ const Appointments: React.FC = () => {
                         <div>
                             <p className="text-xs font-bold text-gray-400 uppercase">Appointment</p>
                             <p className="font-bold text-gray-900 dark:text-white">
-                                {formatTime(selectedAppointment.appointment_date, '')} at {selectedAppointment.time_slot}
+                                {formatAppointmentDate(selectedAppointment.appointment_date)} at {selectedAppointment.time_slot}
                             </p>
                             <p className="text-sm text-gray-500">{selectedAppointment.reason}</p>
                         </div>
@@ -686,7 +811,7 @@ const Appointments: React.FC = () => {
         </div>
       )}
 
-      {/* Start Consultation Modal (Full Logic Preserved) */}
+      {/* Start Consultation Modal */}
       {showConsultModal && selectedAppointment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md overflow-y-auto">
            <div className="bg-white dark:bg-[#102023] rounded-3xl shadow-2xl max-w-4xl w-full my-auto flex flex-col animate-in fade-in zoom-in duration-200 border border-gray-100 dark:border-[#224449]">
@@ -785,7 +910,7 @@ const Appointments: React.FC = () => {
                            
                            {consultForm.initialStep.prescriptions.map((item, index) => (
                              <div key={index} className="bg-white dark:bg-[#102023] border border-gray-200 dark:border-[#224449] rounded-2xl p-4 relative group shadow-sm">
-                               {index > 0 && (
+                               {consultForm.initialStep.prescriptions.length > 1 && (
                                  <button 
                                    onClick={() => removePrescription(index)}
                                    className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"

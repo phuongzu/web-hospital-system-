@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Conversation, Message } from '../types';
-import { API_BASE_URL, getAuthToken, getDoctorId } from '../utils/api';
+import { API_BASE_URL, getAuthToken, getDoctorId, getAvatarUrl } from '../utils/api';
 
 const Messages: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -89,25 +89,40 @@ const Messages: React.FC = () => {
             </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-            {conversations.map(conv => (
-                <div 
-                    key={conv._id}
-                    onClick={() => setSelectedConv(conv)}
-                    className={`p-4 flex gap-3 cursor-pointer transition-colors ${selectedConv?._id === conv._id ? 'bg-primary/5 dark:bg-primary/10 border-r-2 border-primary' : 'hover:bg-gray-50 dark:hover:bg-white/5'}`}
-                >
-                    <div className="relative size-12">
-                        <div className="size-12 rounded-full bg-cover bg-center bg-gray-200" style={{backgroundImage: `url('${conv.participant.avatar || ''}')`}}>
-                            {!conv.participant.avatar && <span className="flex items-center justify-center h-full text-gray-500">{conv.participant.name[0]}</span>}
+            {conversations.map(conv => {
+                const participantAvatarUrl = getAvatarUrl(conv.participant.avatar);
+                
+                return (
+                    <div 
+                        key={conv._id}
+                        onClick={() => setSelectedConv(conv)}
+                        className={`p-4 flex gap-3 cursor-pointer transition-colors ${selectedConv?._id === conv._id ? 'bg-primary/5 dark:bg-primary/10 border-r-2 border-primary' : 'hover:bg-gray-50 dark:hover:bg-white/5'}`}
+                    >
+                        <div className="relative size-12">
+                            <div 
+                                className="size-12 rounded-full bg-cover bg-center bg-gray-200" 
+                                style={{backgroundImage: `url('${participantAvatarUrl}')`}}
+                            >
+                                {!conv.participant.avatar && (
+                                    <span className="flex items-center justify-center h-full text-gray-500">
+                                        {conv.participant.name[0]}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-baseline mb-1">
+                                <h4 className="font-semibold text-gray-900 dark:text-white truncate">
+                                    {conv.participant.name}
+                                </h4>
+                            </div>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                                {conv.last_message?.message || 'No messages'}
+                            </p>
                         </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-baseline mb-1">
-                            <h4 className="font-semibold text-gray-900 dark:text-white truncate">{conv.participant.name}</h4>
-                        </div>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{conv.last_message?.message || 'No messages'}</p>
-                    </div>
-                </div>
-            ))}
+                );
+            })}
         </div>
       </div>
 
@@ -117,9 +132,14 @@ const Messages: React.FC = () => {
              <>
                 <header className="p-4 border-b border-gray-200 dark:border-[#224449] bg-white dark:bg-[#102023] flex justify-between items-center">
                     <div className="flex items-center gap-3">
-                        <div className="size-10 rounded-full bg-cover bg-center bg-gray-200" style={{backgroundImage: `url('${selectedConv.participant.avatar || ''}')`}}></div>
+                        <div 
+                            className="size-10 rounded-full bg-cover bg-center bg-gray-200" 
+                            style={{backgroundImage: `url('${getAvatarUrl(selectedConv.participant.avatar)}')`}}
+                        ></div>
                         <div>
-                            <h3 className="font-bold text-gray-900 dark:text-white leading-tight">{selectedConv.participant.name}</h3>
+                            <h3 className="font-bold text-gray-900 dark:text-white leading-tight">
+                                {selectedConv.participant.name}
+                            </h3>
                         </div>
                     </div>
                 </header>
@@ -127,9 +147,16 @@ const Messages: React.FC = () => {
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {messages.map(msg => {
                         const isMe = msg.sender_id._id === doctorId;
+                        const senderAvatarUrl = getAvatarUrl(msg.sender_id.avatar);
+                        
                         return (
                             <div key={msg._id} className={`flex gap-3 max-w-[80%] ${isMe ? 'ml-auto justify-end' : ''}`}>
-                                {!isMe && <div className="size-8 rounded-full bg-cover bg-center shrink-0 mt-auto bg-gray-200" style={{backgroundImage: `url('${selectedConv.participant.avatar || ''}')`}}></div>}
+                                {!isMe && (
+                                    <div 
+                                        className="size-8 rounded-full bg-cover bg-center shrink-0 mt-auto bg-gray-200" 
+                                        style={{backgroundImage: `url('${senderAvatarUrl}')`}}
+                                    ></div>
+                                )}
                                 <div className={`${isMe ? 'bg-primary text-white' : 'bg-white dark:bg-[#1a2c2f] text-gray-800 dark:text-gray-200'} p-3 rounded-2xl shadow-sm ${isMe ? 'rounded-br-none' : 'rounded-bl-none'}`}>
                                     <p className="text-sm">{msg.message}</p>
                                     <p className={`text-[10px] mt-1 text-right ${isMe ? 'text-white/80' : 'text-gray-400'}`}>
