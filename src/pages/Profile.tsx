@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useRealTimeData } from '../context/RealTimeDataContext';
 import { API_BASE_URL, getDoctorId, getAvatarUrl } from '../utils/api';
 import { DoctorProfile } from '../types';
 
 const Profile: React.FC = () => {
+   const { notifications } = useRealTimeData() || { notifications: [] };
   const [profile, setProfile] = useState<DoctorProfile | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,9 +27,16 @@ const Profile: React.FC = () => {
     }
   };
 
-  useEffect(() => { 
-    if (doctorId) fetchProfile(); 
-  }, [doctorId]);
+   useEffect(() => { 
+      if (doctorId) fetchProfile(); 
+   }, [doctorId]);
+
+   // Refetch profile on relevant real-time notifications
+   useEffect(() => {
+      if (notifications.some(n => n.type === 'profile')) {
+         fetchProfile();
+      }
+   }, [notifications]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
      if (!e.target.files?.[0]) return;

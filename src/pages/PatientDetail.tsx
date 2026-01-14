@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useRealTimeData } from '../context/RealTimeDataContext';
 import { useParams, Link } from 'react-router-dom';
 import { User, Appointment, Consultation } from '../types';
 import { getDoctorId, API_BASE_URL, getAvatarUrl, calculateAge, formatDate } from '../utils/api';
 
 const PatientDetail: React.FC = () => {
+    const { notifications, messages } = useRealTimeData() || { notifications: [], messages: [] };
   const { id } = useParams<{ id: string }>();
   const [patient, setPatient] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState('Personal Info');
@@ -15,10 +17,9 @@ const PatientDetail: React.FC = () => {
 
   const doctorId = getDoctorId();
 
-  useEffect(() => {
-    if (!id || !doctorId) return;
-    
-    const fetchData = async () => {
+    // Unified fetch logic for patient details, appointments, and consultations
+    const fetchAllPatientData = async () => {
+        if (!id || !doctorId) return;
         try {
             setLoading(true);
             // 1. Fetch Patient Details
@@ -28,35 +29,39 @@ const PatientDetail: React.FC = () => {
                 const found = (patientData.data as User[]).find(p => p._id === id);
                 setPatient(found || null);
             }
-
             // 2. Fetch Appointments
             const apptRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments`);
             const apptData = await apptRes.json();
             if (apptData.success) {
-                // Filter for this patient
                 const patientAppts = (apptData.data as Appointment[]).filter(a => a.user_id?._id === id);
-                // Sort by date descending
                 setAppointments(patientAppts.sort((a, b) => new Date(b.appointment_date).getTime() - new Date(a.appointment_date).getTime()));
             }
-
             // 3. Fetch Consultations (Medical History & Treatment Plans)
             const consultRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/consultations`);
             const consultData = await consultRes.json();
             if (consultData.success) {
-                // Filter for this patient
                 const patientConsults = (consultData.data as Consultation[]).filter(c => c.user_id?._id === id);
-                 // Sort by date descending
                 setConsultations(patientConsults.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()));
             }
-
-        } catch(e) {
+        } catch (e) {
             console.error(e);
         } finally {
             setLoading(false);
         }
     };
-    fetchData();
-  }, [id, doctorId]);
+
+    useEffect(() => {
+        fetchAllPatientData();
+    }, [id, doctorId]);
+
+    useEffect(() => {
+        if (
+            notifications.some(n => n.type === 'appointment' || n.type === 'consultation' || n.type === 'patient') ||
+            messages.some(m => m.type === 'consultation' || m.type === 'patient')
+        ) {
+            fetchAllPatientData();
+        }
+    }, [notifications, messages, id, doctorId]);
 
   if (!patient && !loading) return <div className="p-8 text-center text-gray-500">Patient not found.</div>;
   if (loading && !patient) return <div className="p-8 text-center text-gray-500">Loading patient details...</div>;

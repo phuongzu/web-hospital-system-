@@ -1,29 +1,51 @@
 import React, { useEffect, useState } from 'react';
+import { useRealTimeData } from '../context/RealTimeDataContext';
 import { useNavigate } from 'react-router-dom';
 import { Consultation } from '../types';
 import { getDoctorId, API_BASE_URL } from '../utils/api';
 
 const Consultations: React.FC = () => {
+    const { notifications, messages } = useRealTimeData() || { notifications: [], messages: [] };
   const navigate = useNavigate();
   const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [filter, setFilter] = useState('active');
   const doctorId = getDoctorId();
 
-  useEffect(() => {
-    const fetchConsultations = async () => {
-      if (!doctorId) return;
-      try {
-        const response = await fetch(`${API_BASE_URL}/doctors/${doctorId}/consultations`);
-        const data = await response.json();
-        if (data.success) {
-            setConsultations(data.data || []);
+    useEffect(() => {
+        const fetchConsultations = async () => {
+            if (!doctorId) return;
+            try {
+                const response = await fetch(`${API_BASE_URL}/doctors/${doctorId}/consultations`);
+                const data = await response.json();
+                if (data.success) {
+                        setConsultations(data.data || []);
+                }
+            } catch (e) {
+                    console.error(e);
+            }
+        };
+        fetchConsultations();
+    }, [doctorId]);
+
+    // Example: Refetch consultations on relevant real-time events
+    useEffect(() => {
+        if (notifications.some(n => n.type === 'consultation') || messages.some(m => m.type === 'consultation')) {
+            // Refetch consultations if a relevant event is received
+            const fetchConsultations = async () => {
+                if (!doctorId) return;
+                try {
+                    const response = await fetch(`${API_BASE_URL}/doctors/${doctorId}/consultations`);
+                    const data = await response.json();
+                    if (data.success) {
+                            setConsultations(data.data || []);
+                    }
+                } catch (e) {
+                        console.error(e);
+                }
+            };
+            fetchConsultations();
         }
-      } catch (e) {
-          console.error(e);
-      }
-    };
-    fetchConsultations();
-  }, [doctorId]);
+    }, [notifications, messages, doctorId]);
 
   const filteredConsultations = filter === 'all' 
     ? consultations 

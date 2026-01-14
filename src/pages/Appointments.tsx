@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useRealTimeData } from '../context/RealTimeDataContext';
 import { useNavigate } from 'react-router-dom';
 import { Appointment } from '../types';
 import { getDoctorId, API_BASE_URL, getAvatarUrl, calculateAge, getInitials } from '../utils/api';
@@ -117,6 +118,7 @@ const Avatar: React.FC<{
 };
 
 const Appointments: React.FC = () => {
+  const { notifications } = useRealTimeData() || { notifications: [] };
   const navigate = useNavigate();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [filter, setFilter] = useState<Appointment['status'] | 'all'>('pending');
@@ -208,6 +210,13 @@ const Appointments: React.FC = () => {
     fetchAppointments();
     fetchDrugs();
   }, [doctorId]);
+
+  // Refetch appointments on relevant real-time notifications
+  useEffect(() => {
+    if (notifications.some(n => n.type === 'appointment')) {
+      fetchAppointments();
+    }
+  }, [notifications]);
 
   const handleAction = async (id: string, action: 'confirm' | 'cancel' | 'complete') => {
     if (!doctorId) {

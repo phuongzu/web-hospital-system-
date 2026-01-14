@@ -292,6 +292,7 @@ const Dashboard: React.FC = () => {
   const notifRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [refreshingNotifications, setRefreshingNotifications] = useState(false);
+  const [refreshingAppointments, setRefreshingAppointments] = useState(false);
   const [quickStats, setQuickStats] = useState({
     todayAppointments: 0,
     activeConsultations: 0,
@@ -302,7 +303,8 @@ const Dashboard: React.FC = () => {
   const [showToast, setShowToast] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastUpdate, setLastUpdate] = useState(new Date());
-  const [previousNotifications, setPreviousNotifications] = useState<string[]>([]);
+  const [lastAppointmentsUpdate, setLastAppointmentsUpdate] = useState(new Date());
+  const [pollingActive, setPollingActive] = useState(true);
 
   const doctorId = getDoctorId();
 
@@ -320,83 +322,229 @@ const Dashboard: React.FC = () => {
     };
   }, []);
 
-  // ============= FETCH NOTIFICATIONS =============
-const fetchNotifications = useCallback(async (showToastOnNew = false) => {
-  try {
-    setRefreshingNotifications(true);
-    const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
-    if (!token || !doctorId) {
-      console.log('No token or doctorId found');
-      return;
-    }
-
-    const timestamp = new Date().getTime();
-    console.log('📡 Fetching notifications...');
+  // ============= FETCH APPOINTMENTS (REAL-TIME POLLING) =============
+  const fetchAppointments = useCallback(async (showNotification = false) => {
+    if (!doctorId) return;
     
-    const notifRes = await fetch(`${API_BASE_URL}/notifications?page=1&limit=20&_t=${timestamp}`, {
-      headers: { 
-        'Authorization': `Bearer ${token}`,
-        'Cache-Control': 'no-cache'
-      }
-    });
-    
-    if (!notifRes.ok) {
-      console.error('❌ Failed to fetch notifications:', notifRes.status);
-      return;
-    }
-    
-    const notifData = await notifRes.json();
-    
-    if (notifData.success && notifData.data) {
-      // Chuẩn hóa dữ liệu notification
-      const processedNotifications = notifData.data.map((n: any) => ({
-        ...n,
-        _id: n._id || n.id,
-        isRead: n.isRead !== undefined ? n.isRead : (n.read === true),
-        title: n.title || 'Notification',
-        message: n.message || '',
-        type: n.type || 'system',
-        createdAt: n.createdAt || n.created_at || new Date(),
-        data: n.data || {}
-      }));
-
-      // FIX: Sử dụng functional update để tránh dependency cycle
-      setPreviousNotifications(prev => {
-        // Kiểm tra notification mới chỉ khi cần hiển thị toast
-        if (showToastOnNew && prev.length > 0) {
-          const newNotifications = processedNotifications.filter((n: any) => 
-            !prev.includes(n._id) && !n.isRead
-          );
-          
-          if (newNotifications.length > 0) {
-            const latestNotification = newNotifications[0];
-            setToastNotification(latestNotification);
-            setShowToast(true);
-            
-            // Tự động ẩn toast sau 6 giây
-            setTimeout(() => setShowToast(false), 6000);
-          }
+    try {
+      setRefreshingAppointments(true);
+      const today = new Date().toISOString().split('T')[0];
+      const timestamp = new Date().getTime();
+      
+      const aptRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments?date=${today}&_t=${timestamp}`, {
+        headers: { 
+          'Authorization': `Bearer ${localStorage.getItem('token') || localStorage.getItem('accessToken')}`,
+          'Cache-Control': 'no-cache'
         }
-        
-        // Trả về IDs mới
-        return processedNotifications.map((n: any) => n._id);
       });
       
-      // Cập nhật state notifications
-      setNotifications(processedNotifications);
+      if (!aptRes.ok) {
+        console.error('❌ Failed to fetch appointments:', aptRes.status);
+        return;
+      }
       
-      // Tính unread count
-      const newUnreadCount = processedNotifications.filter((n: any) => !n.isRead).length;
-      setUnreadCount(newUnreadCount);
+      const aptData = await aptRes.json();
       
-      setLastUpdate(new Date());
+      if (aptData.success && aptData.data) {
+        const newAppointments = (aptData.data as Appointment[])
+          .filter(a => a.status !== 'cancelled')
+          .sort((a, b) => {
+            const timeA = a.time_slot?.split(':').map(Number) || [0, 0];
+            const timeB = b.time_slot?.split(':').map(Number) || [0, 0];
+            return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
+          });
+        
+        // So sánh với appointments hiện tại để phát hiện thay đổi
+        setAppointments(prev => {
+          // Kiểm tra xem có thay đổi không
+          const hasChanges = JSON.stringify(prev) !== JSON.stringify(newAppointments);
+          
+          if (hasChanges && showNotification && prev.length > 0) {
+            // Tìm appointments mới
+            const newItems = newAppointments.filter(newApp => 
+              !prev.some(oldApp => oldApp._id === newApp._id)
+            );
+            
+            // Tìm appointments bị thay đổi status
+            const updatedItems = newAppointments.filter(newApp => {
+              const oldApp = prev.find(old => old._id === newApp._id);
+              return oldApp && oldApp.status !== newApp.status;
+            });
+            
+            // Hiển thị notification nếu có appointment mới
+            if (newItems.length > 0) {
+              const latestNewAppointment = newItems[0];
+              const notification: NotificationType = {
+                _id: `appointment-new-${Date.now()}`,
+                title: 'New Appointment',
+                message: `Patient ${latestNewAppointment.user_id?.name || 'Unknown'} booked an appointment`,
+                type: 'appointment',
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                data: {
+                  action_url: `/appointments/${latestNewAppointment._id}`,
+                  action_label: 'View Appointment'
+                },
+                user_id: latestNewAppointment.user_id?._id || '',
+                doctor_id: latestNewAppointment.doctor_id || '',
+              };
+              
+              setToastNotification(notification);
+              setShowToast(true);
+              setTimeout(() => setShowToast(false), 5000);
+            }
+            
+            // Hiển thị notification nếu có appointment thay đổi status
+            if (updatedItems.length > 0) {
+              const latestUpdated = updatedItems[0];
+              let message = '';
+              
+              switch (latestUpdated.status) {
+                case 'confirmed':
+                  message = `Appointment with ${latestUpdated.user_id?.name || 'Patient'} has been confirmed`;
+                  break;
+                case 'completed':
+                  message = `Appointment with ${latestUpdated.user_id?.name || 'Patient'} has been completed`;
+                  break;
+                case 'cancelled':
+                  message = `Appointment with ${latestUpdated.user_id?.name || 'Patient'} has been cancelled`;
+                  break;
+              }
+              
+              if (message) {
+                const notification: NotificationType = {
+                  _id: `appointment-update-${Date.now()}`,
+                  title: 'Appointment Updated',
+                  message,
+                  type: 'appointment',
+                  isRead: false,
+                  createdAt: new Date().toISOString(),
+                  data: {
+                    action_url: `/appointments/${latestUpdated._id}`,
+                    action_label: 'View Appointment'
+                  },
+                  user_id: latestUpdated.user_id?._id || '',
+                  doctor_id: latestUpdated.doctor_id || '',
+                };
+                
+                setToastNotification(notification);
+                setShowToast(true);
+                setTimeout(() => setShowToast(false), 5000);
+              }
+            }
+          }
+          
+          return newAppointments;
+        });
+        
+        // Cập nhật quick stats
+        const completedToday = newAppointments.filter(a => a.status === 'completed').length;
+        setQuickStats(prev => ({
+          ...prev,
+          todayAppointments: newAppointments.length,
+          completedToday: completedToday
+        }));
+        
+        setLastAppointmentsUpdate(new Date());
+        setLastUpdate(new Date());
+      }
+    } catch (error) {
+      console.error('❌ Error fetching appointments:', error);
+    } finally {
+      setRefreshingAppointments(false);
     }
-  } catch (error) {
-    console.error("❌ Error fetching notifications:", error);
-  } finally {
-    setRefreshingNotifications(false);
-  }
-}, [doctorId]); // FIX: Xóa previousNotifications khỏi dependencies
+  }, [doctorId]);
+
+  // ============= FETCH NOTIFICATIONS =============
+  const fetchNotifications = useCallback(async (showToastOnNew = false) => {
+    try {
+      setRefreshingNotifications(true);
+      const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
+      if (!token || !doctorId) {
+        console.log('No token or doctorId found');
+        return;
+      }
+
+      const timestamp = new Date().getTime();
+      
+      const notifRes = await fetch(`${API_BASE_URL}/notifications?page=1&limit=20&_t=${timestamp}`, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache'
+        }
+      });
+      
+      if (!notifRes.ok) {
+        console.error('❌ Failed to fetch notifications:', notifRes.status);
+        return;
+      }
+      
+      const notifData = await notifRes.json();
+      
+      if (notifData.success && notifData.data) {
+        const processedNotifications = notifData.data.map((n: any) => ({
+          ...n,
+          _id: n._id || n.id,
+          isRead: n.isRead !== undefined ? n.isRead : (n.read === true),
+          title: n.title || 'Notification',
+          message: n.message || '',
+          type: n.type || 'system',
+          createdAt: n.createdAt || n.created_at || new Date().toISOString(),
+          data: n.data || {}
+        }));
+
+        // Kiểm tra notifications mới
+        setNotifications(prev => {
+          if (showToastOnNew && prev.length > 0) {
+            const newNotifications = processedNotifications.filter((newNotif: any) => 
+              !prev.some(oldNotif => oldNotif._id === newNotif._id) && !newNotif.isRead
+            );
+            
+            if (newNotifications.length > 0) {
+              const latestNotification = newNotifications[0];
+              setToastNotification(latestNotification);
+              setShowToast(true);
+              
+              setTimeout(() => setShowToast(false), 6000);
+            }
+          }
+          
+          return processedNotifications;
+        });
+        
+        const newUnreadCount = processedNotifications.filter((n: any) => !n.isRead).length;
+        setUnreadCount(newUnreadCount);
+        
+        setLastUpdate(new Date());
+      }
+    } catch (error) {
+      console.error("❌ Error fetching notifications:", error);
+    } finally {
+      setRefreshingNotifications(false);
+    }
+  }, [doctorId]);
+
+  // ============= SETUP APPOINTMENTS POLLING =============
+  useEffect(() => {
+    if (!doctorId || !pollingActive) return;
+    const appointmentsInterval = setInterval(() => {
+      fetchAppointments(true);
+    }, 10000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('🔍 Tab visible, refreshing appointments');
+        fetchAppointments(true);
+        fetchNotifications(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(appointmentsInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [doctorId, pollingActive, fetchAppointments, fetchNotifications]);
 
   // ============= FETCH INITIAL DATA =============
   useEffect(() => {
@@ -433,32 +581,7 @@ const fetchNotifications = useCallback(async (showToastOnNew = false) => {
         }
 
         // Fetch Today's Appointments
-        try {
-          const today = new Date().toISOString().split('T')[0];
-          const aptRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments?date=${today}`);
-          if (aptRes.ok) {
-            const aptData = await aptRes.json();
-            if (aptData.success) {
-              const todayApts = (aptData.data as Appointment[])
-                .filter(a => a.status !== 'cancelled')
-                .sort((a, b) => {
-                  const timeA = a.time_slot?.split(':').map(Number) || [0, 0];
-                  const timeB = b.time_slot?.split(':').map(Number) || [0, 0];
-                  return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
-                });
-              setAppointments(todayApts);
-              
-              const completedToday = todayApts.filter(a => a.status === 'completed').length;
-              setQuickStats(prev => ({
-                ...prev,
-                todayAppointments: todayApts.length,
-                completedToday: completedToday
-              }));
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching appointments:', error);
-        }
+        await fetchAppointments(false);
 
         // Fetch Active Consultations
         try {
@@ -496,7 +619,7 @@ const fetchNotifications = useCallback(async (showToastOnNew = false) => {
         }
 
         // Fetch Notifications lần đầu
-        await fetchNotifications();
+        await fetchNotifications(false);
 
       } catch (error) {
         console.error("Dashboard fetch error:", error);
@@ -511,32 +634,20 @@ const fetchNotifications = useCallback(async (showToastOnNew = false) => {
     const dashboardInterval = setInterval(fetchInitialData, 120000);
 
     return () => clearInterval(dashboardInterval);
-  }, [doctorId, fetchNotifications]);
+  }, [doctorId, fetchAppointments, fetchNotifications]);
 
   // ============= SETUP NOTIFICATIONS POLLING =============
-useEffect(() => {
-  if (!doctorId) return;
+  useEffect(() => {
+    if (!doctorId) return;
 
-  // Poll notifications mỗi 15 giây - KHÔNG truyền true mặc định
-  const notificationsInterval = setInterval(() => {
-    fetchNotifications(true); // Chỉ hiển thị toast khi có notification mới
-  }, 15000);
-
-  // Listen for visibility change
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      console.log('🔍 Tab visible, refreshing notifications');
+    const notificationsInterval = setInterval(() => {
       fetchNotifications(true);
-    }
-  };
+    }, 15000);
 
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-
-  return () => {
-    clearInterval(notificationsInterval);
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
-  };
-}, [doctorId, fetchNotifications]);
+    return () => {
+      clearInterval(notificationsInterval);
+    };
+  }, [doctorId, fetchNotifications]);
 
   // ============= HANDLE MARK ALL AS READ =============
   const handleMarkAllRead = async () => {
@@ -555,7 +666,6 @@ useEffect(() => {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          // Cập nhật UI ngay lập tức
           setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
           setUnreadCount(0);
           
@@ -569,7 +679,6 @@ useEffect(() => {
 
   // ============= HANDLE SINGLE NOTIFICATION CLICK =============
   const handleNotificationClick = async (notif: NotificationType) => {
-    // Đánh dấu là đã đọc nếu chưa đọc
     if (!notif.isRead) {
       try {
         const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
@@ -580,7 +689,6 @@ useEffect(() => {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         
-        // Cập nhật UI
         setNotifications(prev => prev.map(n => 
           n._id === notif._id ? { ...n, isRead: true } : n
         ));
@@ -590,11 +698,16 @@ useEffect(() => {
       }
     }
     
-    // Điều hướng nếu có action_url
     if (notif.data?.action_url) {
       navigate(notif.data.action_url);
       setNotifOpen(false);
     }
+  };
+
+  // ============= MANUAL REFRESH =============
+  const handleManualRefresh = () => {
+    fetchAppointments(true);
+    fetchNotifications(true);
   };
 
   // ============= CLICK OUTSIDE NOTIFICATIONS =============
@@ -736,14 +849,23 @@ useEffect(() => {
                         {unreadCount} unread {unreadCount !== 1 ? 'messages' : 'message'}
                       </p>
                     </div>
-                    {unreadCount > 0 && (
+                    <div className="flex items-center gap-2">
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={handleMarkAllRead}
+                          className="text-sm text-primary hover:text-primary/80 font-medium px-3 py-1.5 hover:bg-primary/10 rounded-lg transition-colors"
+                        >
+                          Mark all read
+                        </button>
+                      )}
                       <button
-                        onClick={handleMarkAllRead}
-                        className="text-sm text-primary hover:text-primary/80 font-medium px-3 py-1.5 hover:bg-primary/10 rounded-lg transition-colors"
+                        onClick={handleManualRefresh}
+                        disabled={refreshingNotifications || refreshingAppointments}
+                        className="text-sm text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 font-medium px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
                       >
-                        Mark all read
+                        {refreshingNotifications ? 'Refreshing...' : 'Refresh'}
                       </button>
-                    )}
+                    </div>
                   </div>
                   
                   <div className="max-h-96 overflow-y-auto">
@@ -872,16 +994,25 @@ useEffect(() => {
                     </div>
                     <div>
                       <h3 className="text-lg font-bold text-gray-900 dark:text-white">Today's Schedule</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{appointments.length} appointments</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {appointments.length} appointments • 
+                        {refreshingAppointments && (
+                          <span className="ml-2">
+                            <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
+                          </span>
+                        )}
+                      </p>
                     </div>
                   </div>
-                  <Link
-                    to="/appointments"
-                    className="text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1 hover:gap-2 transition-all"
-                  >
-                    View all
-                    <span className="material-symbols-outlined text-sm">arrow_forward</span>
-                  </Link>
+                  <div className="flex items-center gap-3">
+                    <Link
+                      to="/appointments"
+                      className="text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1 hover:gap-2 transition-all"
+                    >
+                      View all
+                      <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                    </Link>
+                  </div>
                 </div>
               </div>
               
@@ -1065,13 +1196,17 @@ useEffect(() => {
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-gray-500 dark:text-gray-400">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span>System Online</span>
+                <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+                <span>{isOnline ? 'System Online' : 'System Offline'}</span>
               </div>
-              {refreshingNotifications && (
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                <span>Auto-refresh active</span>
+              </div>
+              {refreshingAppointments && (
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                  <span>Updating notifications...</span>
+                  <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div>
+                  <span>Updating appointments...</span>
                 </div>
               )}
             </div>

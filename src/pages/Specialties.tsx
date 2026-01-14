@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Specialty } from '../types';
 import { API_BASE_URL } from '../utils/api';
+import { useRealTimeData } from '../context/RealTimeDataContext';
 
 // Helper to map CSV icon names to Material Symbols
 const getIconName = (csvIcon: string | undefined) => {
@@ -34,6 +35,7 @@ const mapToSpecialty = (items: any[]): Specialty[] => {
 const Specialties: React.FC = () => {
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [loading, setLoading] = useState(true);
+  const { notifications } = useRealTimeData() || { notifications: [] };
 
   useEffect(() => {
     const fetchSpecialties = async () => {
@@ -67,6 +69,24 @@ const Specialties: React.FC = () => {
       </div>
     );
 
+    // Refetch specialties on relevant real-time notifications
+    useEffect(() => {
+      if (notifications.some(n => n.type === 'specialty')) {
+        const fetchSpecialties = async () => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/specialties`);
+            const data = await response.json();
+
+            if (data.success) {
+              setSpecialties(mapToSpecialty(data.data));
+            }
+          } catch (e) {
+            console.error('Error fetching specialties:', e);
+          }
+        };
+        fetchSpecialties();
+      }
+    }, [notifications]);
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <header className="flex flex-wrap justify-between items-center gap-4 mb-8">

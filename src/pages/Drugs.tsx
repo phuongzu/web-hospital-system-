@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useRealTimeData } from '../context/RealTimeDataContext';
 import { API_BASE_URL } from '../utils/api';
 
 interface Drug {
@@ -17,6 +18,7 @@ interface Drug {
 }
 
 const Drugs: React.FC = () => {
+  const { notifications, messages } = useRealTimeData() || { notifications: [], messages: [] };
   const [drugs, setDrugs] = useState<Drug[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -25,6 +27,15 @@ const Drugs: React.FC = () => {
   useEffect(() => {
     fetchDrugs();
   }, []);
+
+  // Example: Listen for new drug-related notifications/messages
+  useEffect(() => {
+    // You can filter notifications/messages for drug-related updates and refresh data if needed
+    // For example, if a notification of type 'drug' is received, refetch drugs
+    if (notifications.some(n => n.type === 'drug')) {
+      fetchDrugs();
+    }
+  }, [notifications]);
 
   const fetchDrugs = async () => {
     try {
