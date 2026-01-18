@@ -22,6 +22,7 @@ export const Layout: React.FC = () => {
 
   const doctorId = getDoctorId();
   const navigate = useNavigate();
+  const adminToken = localStorage.getItem('adminToken');
 
   // Check authentication
   useEffect(() => {
@@ -29,8 +30,6 @@ export const Layout: React.FC = () => {
       navigate('/login');
     }
   }, [doctorId, navigate]);
-
-  // Fetch real data from API
   useEffect(() => {
     if (!doctorId) return;
 
@@ -48,7 +47,7 @@ export const Layout: React.FC = () => {
   const handleLogout = useCallback(() => {
     localStorage.clear();
     navigate('/login');
-  }, [navigate]);
+}, [navigate]);
 
   const toggleStatus = async () => {
     if (loadingStatus || !doctorId) return;

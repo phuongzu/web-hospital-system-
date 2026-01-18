@@ -342,7 +342,7 @@ const Messages: React.FC = () => {
             <div className="w-32 h-32 bg-slate-50 rounded-[3rem] flex items-center justify-center mb-8 shadow-inner">
                <span className="material-symbols-outlined text-6xl text-blue-600/20">chat_bubble</span>
             </div>
-            <h2 className="text-4xl font-black text-slate-900 mb-4 tracking-tight">MedPro Messaging</h2>
+            <h2 className="text-4xl font-black text-slate-900 mb-4 tracking-tight">MediCare Messaging</h2>
             <p className="text-lg font-bold text-slate-400">Select a verified patient to start consultation</p>
           </div>
         )}

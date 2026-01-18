@@ -934,7 +934,7 @@ const renderDashboard = () => (
           System Overview 🚀
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Complete overview of the MedPro healthcare system
+          Complete overview of the MedCare healthcare system
         </Typography>
       </Box>
 
@@ -2319,7 +2319,7 @@ const renderDrugs = () => (
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1, bgcolor: '#1e293b' }}>
         <Toolbar>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold' }}>
-            🏥 MedPro System Admin
+            🏥 MediCare System Admin
           </Typography>
           
           <IconButton color="inherit" onClick={(e) => setUserMenuAnchor(e.currentTarget)}>

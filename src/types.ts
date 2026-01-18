@@ -61,7 +61,7 @@ export interface Stat {
   count: number;
 }
 
-export type StepStatus = 'pending' | 'in-progress' | 'completed' | 'approved' | 'rejected';
+export type StepStatus = 'pending' | 'in-progress' | 'completed' | 'approved' | 'rejected' | 'scheduled';
 
 export interface TreatmentStep {
   stepNumber: number;
@@ -81,8 +81,9 @@ export interface TreatmentStep {
   condition_description?: string;
   patient_message?: string;
   doctorNotes?: string;
+  isPhysicalVisit: boolean;
+  scheduledAt?: string;
   _id?: string;
-
 }
 
 export interface MedicalRecord {
@@ -390,4 +391,3 @@ export interface Drug {
   created_at: string;
   updated_at: string;
 }
-
