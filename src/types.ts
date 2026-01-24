@@ -83,6 +83,8 @@ export interface TreatmentStep {
   doctorNotes?: string;
   isPhysicalVisit: boolean;
   scheduledAt?: string;
+  reExaminationScheduled: boolean;
+  needsReExamination: boolean;
   _id?: string;
 }
 

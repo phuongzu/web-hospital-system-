@@ -170,4 +170,27 @@ export class PushNotificationService {
   }
 } 
 
+export const getTimeFromDateTime = (dateTimeString: string): string => {
+  try {
+    const date = new Date(dateTimeString);
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  } catch {
+    return dateTimeString;
+  }
+};
+
+export const getDateFromDateTime = (dateTimeString: string): string => {
+  try {
+    const date = new Date(dateTimeString);
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch {
+    return dateTimeString;
+  }
+};
+
 
