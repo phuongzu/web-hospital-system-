@@ -61,7 +61,7 @@ export interface Stat {
   count: number;
 }
 
-export type StepStatus = 'pending' | 'in-progress' | 'completed' | 'approved' | 'rejected' | 'scheduled';
+export type StepStatus = 'pending' | 'in-progress' | 'completed' | 'confirmed' | 'approved' | 'rejected' | 'scheduled';
 
 export interface TreatmentStep {
   stepNumber: number;
@@ -85,7 +85,15 @@ export interface TreatmentStep {
   scheduledAt?: string;
   reExaminationScheduled: boolean;
   needsReExamination: boolean;
+  reExaminationNotes?: string;
   _id?: string;
+    // Re-Examination Fields
+  isReExaminationVisit?: boolean;
+  reExaminationDate?: string | Date;
+  reExaminationTime?: string;
+  reExaminationAppointmentId?: string;
+  arrivalConfirmed?: boolean;
+  arrivalConfirmedAt?: string | Date;
 }
 
 export interface MedicalRecord {
@@ -392,4 +400,11 @@ export interface Drug {
   specialty_data: DrugSpecialtyIndication[];
   created_at: string;
   updated_at: string;
+}
+
+export interface PrescriptionItem {
+  medication: string;
+  dosage: string;
+  duration: string;
+  instructions: string;
 }
