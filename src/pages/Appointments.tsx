@@ -89,13 +89,11 @@ const Avatar: React.FC<{
   
   const avatarUrl = getAvatarUrl(avatarPath);
   const initials = getInitials(name);
-  
-  // Kiểm tra thực sự có avatar hay không (không phải default)
-  const hasRealAvatar = avatarPath && 
+    const hasRealAvatar = avatarPath && 
     avatarPath !== 'undefined' && 
     avatarPath !== 'null' && 
     avatarPath.trim() !== '' &&
-    !avatarUrl.includes('aida-public'); // Kiểm tra không phải default Google avatar
+    !avatarUrl.includes('aida-public');
   
   const shapeClass = rounded ? 'rounded-full' : 'rounded-2xl';
   
@@ -410,18 +408,25 @@ const Appointments: React.FC = () => {
     return statusMatch && dateMatch;
   });
 
-  // Sorting: Pending first, then by date
+  // Updated sorting with scheduled status
   const sortedAppointments = [...filteredAppointments].sort((a, b) => {
-    if (a.status === 'pending' && b.status !== 'pending') return -1;
-    if (a.status !== 'pending' && b.status === 'pending') return 1;
+    // Priority order: pending > scheduled > confirmed > others
+    const statusOrder = { pending: 1, scheduled: 2, confirmed: 3, completed: 4, cancelled: 5 };
+    const orderA = statusOrder[a.status as keyof typeof statusOrder] || 6;
+    const orderB = statusOrder[b.status as keyof typeof statusOrder] || 6;
+    
+    if (orderA !== orderB) return orderA - orderB;
     return new Date(a.appointment_date).getTime() - new Date(b.appointment_date).getTime();
   });
 
+  // Updated stats with scheduled
   const stats = {
     total: appointments.length,
     pending: appointments.filter(a => a.status === 'pending').length,
+    scheduled: appointments.filter(a => a.status === 'scheduled').length,
     confirmed: appointments.filter(a => a.status === 'confirmed').length,
     completed: appointments.filter(a => a.status === 'completed').length,
+    cancelled: appointments.filter(a => a.status === 'cancelled').length,
   };
 
   // Calendar Logic
@@ -513,10 +518,12 @@ const Appointments: React.FC = () => {
             )}
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Updated Stats Grid with scheduled */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {[
             { label: 'Total Appointments', value: stats.total, icon: 'calendar_month', color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20' },
             { label: 'Pending Requests', value: stats.pending, icon: 'hourglass_top', color: 'text-yellow-600', bg: 'bg-yellow-50 dark:bg-yellow-900/20' },
+            { label: 'Scheduled', value: stats.scheduled, icon: 'schedule', color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20' },
             { label: 'Confirmed', value: stats.confirmed, icon: 'check_circle', color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-900/20' },
             { label: 'Completed', value: stats.completed, icon: 'task_alt', color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' }
           ].map((stat, i) => (
@@ -610,9 +617,9 @@ const Appointments: React.FC = () => {
 
         {/* Main Content: Timeline Feed (8 cols) */}
         <div className="xl:col-span-9 flex flex-col gap-6">
-          {/* Tabs */}
+          {/* Updated Tabs with scheduled */}
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-             {['pending', 'confirmed', 'completed', 'cancelled', 'all'].map(status => (
+             {['all', 'pending', 'scheduled', 'confirmed', 'completed', 'cancelled'].map(status => (
                 <button 
                     key={status} 
                     onClick={() => setFilter(status as any)}
@@ -626,6 +633,9 @@ const Appointments: React.FC = () => {
                     {status.charAt(0).toUpperCase() + status.slice(1)}
                     {status === 'pending' && stats.pending > 0 && (
                         <span className="ml-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{stats.pending}</span>
+                    )}
+                    {status === 'scheduled' && stats.scheduled > 0 && (
+                        <span className="ml-2 bg-indigo-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{stats.scheduled}</span>
                     )}
                 </button>
             ))}
@@ -649,8 +659,9 @@ const Appointments: React.FC = () => {
                     {sortedAppointments.map((app, index) => {
                       return (
                         <div key={app._id} className="relative pl-8 pb-8 last:pb-0 border-l-2 border-dashed border-gray-200 dark:border-[#224449] group">
-                            {/* Timeline Dot */}
+                            {/* Updated Timeline Dot with scheduled */}
                             <div className={`absolute -left-[9px] top-0 size-4 rounded-full border-4 border-white dark:border-[#102023] transition-colors ${
+                                app.status === 'scheduled' ? 'bg-indigo-500' :
                                 app.status === 'confirmed' ? 'bg-primary' : 
                                 app.status === 'completed' ? 'bg-green-500' :
                                 app.status === 'pending' ? 'bg-yellow-400' : 'bg-gray-300'
@@ -686,7 +697,7 @@ const Appointments: React.FC = () => {
                                     </div>
                                   </div>
 
-                                    {/* Actions */}
+                                    {/* Updated Actions with scheduled */}
                                     <div className="flex items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
                                         
                                         {app.status === 'pending' && (
@@ -699,6 +710,27 @@ const Appointments: React.FC = () => {
                                                     {actionLoading === app._id ? (
                                                       <span className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white dark:border-black"></span>
                                                     ) : 'Confirm'}
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleAction(app._id, 'cancel')}
+                                                    disabled={actionLoading === app._id}
+                                                    className="size-9 flex items-center justify-center rounded-lg border border-gray-200 dark:border-[#224449] text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                                                >
+                                                    <span className="material-symbols-outlined text-lg">close</span>
+                                                </button>
+                                            </>
+                                        )}
+
+                                        {app.status === 'scheduled' && (
+                                            <>
+                                                <button 
+                                                    onClick={() => handleAction(app._id, 'confirm')}
+                                                    disabled={actionLoading === app._id}
+                                                    className="flex-1 md:flex-none px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold hover:bg-primary/90 shadow-lg shadow-primary/30"
+                                                >
+                                                    {actionLoading === app._id ? (
+                                                      <span className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+                                                    ) : 'Confirm Arrival'}
                                                 </button>
                                                 <button 
                                                     onClick={() => handleAction(app._id, 'cancel')}
@@ -804,11 +836,17 @@ const Appointments: React.FC = () => {
                  </div>
               </div>
               
+              {/* Updated Modal Footer with scheduled */}
               <div className="p-6 pt-0 flex gap-3">
                  {selectedAppointment.status === 'pending' ? (
                     <>
                          <button onClick={() => handleAction(selectedAppointment._id, 'cancel')} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Decline</button>
                          <button onClick={() => handleAction(selectedAppointment._id, 'confirm')} className="flex-1 py-3 rounded-xl bg-gray-900 text-white font-bold hover:bg-gray-800 transition-colors">Confirm</button>
+                    </>
+                 ) : selectedAppointment.status === 'scheduled' ? (
+                    <>
+                         <button onClick={() => handleAction(selectedAppointment._id, 'cancel')} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Cancel</button>
+                         <button onClick={() => handleAction(selectedAppointment._id, 'confirm')} className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary/90 transition-colors">Confirm Arrival</button>
                     </>
                  ) : selectedAppointment.status === 'confirmed' ? (
                      <button onClick={() => { setShowDetailModal(false); openStartConsultation(selectedAppointment); }} className="w-full py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary/90 shadow-lg shadow-primary/30">Start Consultation</button>

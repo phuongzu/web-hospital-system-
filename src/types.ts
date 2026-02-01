@@ -40,7 +40,7 @@ export interface Appointment {
   appointment_date: string;
   time_slot: string;
   reason?: string;
-  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'completed' | 'scheduled'| 'cancelled';
   notes?: string;
   created_at: string;
 }

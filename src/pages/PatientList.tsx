@@ -6,6 +6,18 @@ import { getDoctorId, API_BASE_URL, formatDate, getAvatarUrl } from '../utils/ap
 const Patients: React.FC = () => {
   const navigate = useNavigate();
   const [patients, setPatients] = useState<User[]>([]);
+  const todayAppointments = patients.filter(patient => {
+    const today = new Date().toISOString().split('T')[0];
+    return (patient as any).appointments?.some((appt: any) => appt.appointment_date === today);
+  });
+  const pendingReviews = patients.filter(patient => {
+    return (patient as any).reviews?.some((review: any) => review.status === 'pending');
+  });
+  const newPatientsThisMonth = patients.filter(patient => {
+    const createdAt = new Date((patient as any).created_at);
+    const now = new Date();
+    return createdAt.getMonth() === now.getMonth() && createdAt.getFullYear() === now.getFullYear();
+  });
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +144,7 @@ const Patients: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-green-100 text-sm font-medium">Today's Appointments</p>
-              <p className="text-2xl font-bold mt-1">12</p>
+              <p className="text-2xl font-bold mt-1">{todayAppointments.length}</p>
             </div>
             <span className="material-symbols-outlined text-3xl opacity-80">calendar_today</span>
           </div>
@@ -142,7 +154,7 @@ const Patients: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-purple-100 text-sm font-medium">Pending Reviews</p>
-              <p className="text-2xl font-bold mt-1">5</p>
+              <p className="text-2xl font-bold mt-1">{pendingReviews.length}</p>
             </div>
             <span className="material-symbols-outlined text-3xl opacity-80">rate_review</span>
           </div>
@@ -152,7 +164,7 @@ const Patients: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-orange-100 text-sm font-medium">New This Month</p>
-              <p className="text-2xl font-bold mt-1">8</p>
+              <p className="text-2xl font-bold mt-1">{newPatientsThisMonth.length}</p>
             </div>
             <span className="material-symbols-outlined text-3xl opacity-80">trending_up</span>
           </div>

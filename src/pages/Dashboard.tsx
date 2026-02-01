@@ -1,5 +1,4 @@
-
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Appointment, 
@@ -11,8 +10,28 @@ import {
 } from '../types';
 import { getDoctorId, API_BASE_URL, formatDate } from '../utils/api';
 
+// ============= OPTIMIZATION HELPERS =============
+// Helper to compare appointments without JSON.stringify whole object
+const areAppointmentsEqual = (prev: Appointment[], next: Appointment[]) => {
+  if (prev.length !== next.length) return false;
+  // Check crucial fields that affect UI: ID, Status, Time
+  return prev.every((p, i) => 
+    p._id === next[i]._id && 
+    p.status === next[i].status && 
+    p.time_slot === next[i].time_slot
+  );
+};
+
+// Helper to compare notifications
+const areNotificationsEqual = (prev: NotificationType[], next: NotificationType[]) => {
+  if (prev.length !== next.length) return false;
+  // Check ID and Read status
+  return prev.every((n, i) => n._id === next[i]._id && n.isRead === next[i].isRead);
+};
+
 // ============= TOAST NOTIFICATION COMPONENT =============
-const ToastNotification = ({ notification, onClose, navigate }: { 
+// OPTIMIZATION: Memoize to prevent re-render when parent state (like stats) changes
+const ToastNotification = React.memo(({ notification, onClose, navigate }: { 
   notification: NotificationType, 
   onClose: () => void,
   navigate: any 
@@ -102,10 +121,11 @@ const ToastNotification = ({ notification, onClose, navigate }: {
       </div>
     </div>
   );
-};
+});
 
 // ============= STAT CARD COMPONENT =============
-const StatCard = ({ icon, label, value, change, color, isLoading, onClick }: any) => {
+// OPTIMIZATION: Memoize strictly. Only re-render if value/loading changes.
+const StatCard = React.memo(({ icon, label, value, change, color, isLoading, onClick }: any) => {
   // Extracting from/to for the medical-grade subtle backgrounds
   const bgColorMap: Record<string, string> = {
     'from-blue-500 to-blue-700': 'bg-blue-600',
@@ -150,10 +170,11 @@ const StatCard = ({ icon, label, value, change, color, isLoading, onClick }: any
       </div>
     </div>
   );
-};
+});
 
 // ============= APPOINTMENT CARD COMPONENT =============
-const AppointmentCard = ({ appointment, onClick }: any) => {
+// OPTIMIZATION: Memoize to avoid list re-renders during polling if this item didn't change
+const AppointmentCard = React.memo(({ appointment, onClick }: any) => {
   const getStatusStyle = (status: string) => {
     switch (status.toLowerCase()) {
       case 'confirmed':
@@ -218,10 +239,11 @@ const AppointmentCard = ({ appointment, onClick }: any) => {
       </div>
     </div>
   );
-};
+});
 
 // ============= CONSULTATION CARD COMPONENT =============
-const ConsultationCard = ({ consultation, onClick }: any) => {
+// OPTIMIZATION: Memoize to prevent re-renders when other dashboard parts update
+const ConsultationCard = React.memo(({ consultation, onClick }: any) => {
   const getSeverityColor = (severity: string) => {
     switch (severity?.toLowerCase()) {
       case 'critical':
@@ -285,7 +307,7 @@ const ConsultationCard = ({ consultation, onClick }: any) => {
       )}
     </div>
   );
-};
+});
 
 // ============= MAIN DASHBOARD COMPONENT =============
 const Dashboard: React.FC = () => {
@@ -300,8 +322,11 @@ const Dashboard: React.FC = () => {
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
+  
+  // OPTIMIZATION: State indicating background refresh vs manual refresh
   const [refreshingNotifications, setRefreshingNotifications] = useState(false);
   const [refreshingAppointments, setRefreshingAppointments] = useState(false);
+  
   const [quickStats, setQuickStats] = useState({
     todayAppointments: 0,
     activeConsultations: 0,
@@ -332,11 +357,12 @@ const Dashboard: React.FC = () => {
   }, []);
 
   // ============= FETCH APPOINTMENTS (REAL-TIME POLLING) =============
-  const fetchAppointments = useCallback(async (showNotification = false) => {
+  // OPTIMIZATION: Added `isBackground` param to avoid setting loading state during background polls
+  const fetchAppointments = useCallback(async (showNotification = false, isBackground = false) => {
     if (!doctorId) return;
     
     try {
-      setRefreshingAppointments(true);
+      if (!isBackground) setRefreshingAppointments(true);
       const today = new Date().toISOString().split('T')[0];
       const timestamp = new Date().getTime();
       
@@ -349,6 +375,7 @@ const Dashboard: React.FC = () => {
       
       if (!aptRes.ok) {
         console.error('❌ Failed to fetch appointments:', aptRes.status);
+        if (!isBackground) setRefreshingAppointments(false);
         return;
       }
       
@@ -364,9 +391,12 @@ const Dashboard: React.FC = () => {
           });
         
         setAppointments(prev => {
-          const hasChanges = JSON.stringify(prev) !== JSON.stringify(newAppointments);
+          // OPTIMIZATION: Check for equality before update to avoid re-renders
+          const hasChanges = !areAppointmentsEqual(prev, newAppointments);
           
-          if (hasChanges && showNotification && prev.length > 0) {
+          if (!hasChanges) return prev; // Return same reference -> No re-render
+          
+          if (showNotification && prev.length > 0) {
             const newItems = newAppointments.filter(newApp => 
               !prev.some(oldApp => oldApp._id === newApp._id)
             );
@@ -436,33 +466,46 @@ const Dashboard: React.FC = () => {
               }
             }
           }
+
+          // Update related stats only when appointments actually change
+          const completedToday = newAppointments.filter(a => a.status === 'completed').length;
+          
+          // OPTIMIZATION: Only update quickStats if values differ
+          setQuickStats(prevStats => {
+            if (prevStats.todayAppointments === newAppointments.length && prevStats.completedToday === completedToday) {
+              return prevStats;
+            }
+            return {
+              ...prevStats,
+              todayAppointments: newAppointments.length,
+              completedToday: completedToday
+            };
+          });
+
+          // OPTIMIZATION: Only update timestamps if data actually changed
+          setLastAppointmentsUpdate(new Date());
+          setLastUpdate(new Date());
           
           return newAppointments;
         });
-        
-        const completedToday = newAppointments.filter(a => a.status === 'completed').length;
-        setQuickStats(prev => ({
-          ...prev,
-          todayAppointments: newAppointments.length,
-          completedToday: completedToday
-        }));
-        
-        setLastAppointmentsUpdate(new Date());
-        setLastUpdate(new Date());
       }
     } catch (error) {
       console.error('❌ Error fetching appointments:', error);
     } finally {
-      setRefreshingAppointments(false);
+      if (!isBackground) setRefreshingAppointments(false);
     }
   }, [doctorId]);
 
   // ============= FETCH NOTIFICATIONS =============
-  const fetchNotifications = useCallback(async (showToastOnNew = false) => {
+  // OPTIMIZATION: Added `isBackground` param
+  const fetchNotifications = useCallback(async (showToastOnNew = false, isBackground = false) => {
     try {
-      setRefreshingNotifications(true);
+      if (!isBackground) setRefreshingNotifications(true);
       const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
-      if (!token || !doctorId) return;
+      if (!token || !doctorId) {
+        if (!isBackground) setRefreshingNotifications(false);
+        return;
+      }
 
       const timestamp = new Date().getTime();
       const notifRes = await fetch(`${API_BASE_URL}/notifications?page=1&limit=20&_t=${timestamp}`, {
@@ -472,7 +515,10 @@ const Dashboard: React.FC = () => {
         }
       });
       
-      if (!notifRes.ok) return;
+      if (!notifRes.ok) {
+        if (!isBackground) setRefreshingNotifications(false);
+        return;
+      }
       
       const notifData = await notifRes.json();
       
@@ -489,6 +535,11 @@ const Dashboard: React.FC = () => {
         }));
 
         setNotifications(prev => {
+          // OPTIMIZATION: Check for equality before update
+          const hasChanges = !areNotificationsEqual(prev, processedNotifications);
+          
+          if (!hasChanges) return prev; // No re-render
+
           if (showToastOnNew && prev.length > 0) {
             const newNotifications = processedNotifications.filter((newNotif: any) => 
               !prev.some(oldNotif => oldNotif._id === newNotif._id) && !newNotif.isRead
@@ -501,30 +552,36 @@ const Dashboard: React.FC = () => {
               setTimeout(() => setShowToast(false), 6000);
             }
           }
+          
+          // Only update unread count if notifications changed
+          const newUnreadCount = processedNotifications.filter((n: any) => !n.isRead).length;
+          setUnreadCount(newUnreadCount);
+          setLastUpdate(new Date());
+
           return processedNotifications;
         });
-        
-        const newUnreadCount = processedNotifications.filter((n: any) => !n.isRead).length;
-        setUnreadCount(newUnreadCount);
-        setLastUpdate(new Date());
       }
     } catch (error) {
       console.error("❌ Error fetching notifications:", error);
     } finally {
-      setRefreshingNotifications(false);
+      if (!isBackground) setRefreshingNotifications(false);
     }
   }, [doctorId]);
 
   // ============= SETUP APPOINTMENTS POLLING =============
   useEffect(() => {
     if (!doctorId || !pollingActive) return;
+    
+    // OPTIMIZATION: Check visibility state to pause polling when tab inactive
     const appointmentsInterval = setInterval(() => {
-      fetchAppointments(true);
+      if (document.hidden) return;
+      fetchAppointments(true, true); // Pass true for isBackground
     }, 10000);
+    
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        fetchAppointments(true);
-        fetchNotifications(true);
+        fetchAppointments(true, false); // Manual refresh on tab focus
+        fetchNotifications(true, false);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -539,15 +596,23 @@ const Dashboard: React.FC = () => {
     if (!doctorId) return;
     
     const fetchInitialData = async () => {
+      // Don't run background refresh logic if tab is hidden
+      if (document.hidden) return;
+
       try {
-        setLoading(true);
+        // Only set global loading on first mount (profile check)
+        if (!profile) setLoading(true);
+        
         const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
         
         try {
-          const profileRes = await fetch(`${API_BASE_URL}/doctors/profile/${doctorId}`);
-          if (profileRes.ok) {
-            const profileData = await profileRes.json();
-            if (profileData.success) setProfile(profileData.data);
+          // Profile rarely changes, shallow check inside if needed, but usually once is enough or on manual refresh
+          if (!profile) {
+            const profileRes = await fetch(`${API_BASE_URL}/doctors/profile/${doctorId}`);
+            if (profileRes.ok) {
+              const profileData = await profileRes.json();
+              if (profileData.success) setProfile(profileData.data);
+            }
           }
         } catch (e) {}
 
@@ -555,11 +620,17 @@ const Dashboard: React.FC = () => {
           const statsRes = await fetch(`${API_BASE_URL}/doctors/stats/${doctorId}`);
           if (statsRes.ok) {
             const statsData = await statsRes.json();
-            if (statsData.success) setStats(statsData.data || []);
+            if (statsData.success) {
+               // OPTIMIZATION: Simple length/id check for stats
+               setStats(prev => {
+                 if (JSON.stringify(prev) === JSON.stringify(statsData.data || [])) return prev;
+                 return statsData.data || [];
+               });
+            }
           }
         } catch (e) {}
 
-        await fetchAppointments(false);
+        await fetchAppointments(false, !loading); // Background if not initial load
 
         try {
           const consultRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/consultations/active`);
@@ -567,8 +638,18 @@ const Dashboard: React.FC = () => {
             const consultData = await consultRes.json();
             if (consultData.success) {
               const activeConsults = consultData.data || [];
-              setConsultations(activeConsults);
-              setQuickStats(prev => ({ ...prev, activeConsultations: activeConsults.length }));
+              
+              // OPTIMIZATION: Check equality
+              setConsultations(prev => {
+                if (prev.length === activeConsults.length && 
+                    prev.every((c, i) => c._id === activeConsults[i]._id)) return prev;
+                return activeConsults;
+              });
+
+              setQuickStats(prev => {
+                if (prev.activeConsultations === activeConsults.length) return prev;
+                return { ...prev, activeConsultations: activeConsults.length };
+              });
             }
           }
         } catch (e) {}
@@ -578,13 +659,23 @@ const Dashboard: React.FC = () => {
           if (patientsRes.ok) {
             const patientsData = await patientsRes.json();
             if (patientsData.success) {
-              setRecentPatients(patientsData.data || []);
-              setQuickStats(prev => ({ ...prev, totalPatients: patientsData.data?.length || 0 }));
+              const newPatients = patientsData.data || [];
+              setRecentPatients(prev => {
+                 if (prev.length === newPatients.length && 
+                     prev.every((p, i) => p._id === newPatients[i]._id)) return prev;
+                 return newPatients;
+              });
+              
+              setQuickStats(prev => {
+                const count = patientsData.data?.length || 0;
+                if (prev.totalPatients === count) return prev;
+                return { ...prev, totalPatients: count };
+              });
             }
           }
         } catch (e) {}
 
-        await fetchNotifications(false);
+        await fetchNotifications(false, !loading);
       } catch (error) {
         console.error("Dashboard fetch error:", error);
       } finally {
@@ -595,13 +686,14 @@ const Dashboard: React.FC = () => {
     fetchInitialData();
     const dashboardInterval = setInterval(fetchInitialData, 120000);
     return () => clearInterval(dashboardInterval);
-  }, [doctorId, fetchAppointments, fetchNotifications]);
+  }, [doctorId, fetchAppointments, fetchNotifications, profile, loading]);
 
   // ============= SETUP NOTIFICATIONS POLLING =============
   useEffect(() => {
     if (!doctorId) return;
     const notificationsInterval = setInterval(() => {
-      fetchNotifications(true);
+      if (document.hidden) return; // OPTIMIZATION: Pause polling
+      fetchNotifications(true, true); // Background fetch
     }, 15000);
     return () => clearInterval(notificationsInterval);
   }, [doctorId, fetchNotifications]);
@@ -642,8 +734,11 @@ const Dashboard: React.FC = () => {
   };
 
   const handleManualRefresh = () => {
-    fetchAppointments(true);
-    fetchNotifications(true);
+    setLoading(true); // Explicit loading for manual refresh
+    fetchAppointments(true, false);
+    fetchNotifications(true, false);
+    // Timeout fallback to turn off loading if requests fail silently
+    setTimeout(() => setLoading(false), 1000);
   };
 
   useEffect(() => {
@@ -679,7 +774,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const totalAppointments = stats.reduce((acc, curr) => acc + (curr.count || 0), 0);
+  const totalAppointments = useMemo(() => stats.reduce((acc, curr) => acc + (curr.count || 0), 0), [stats]);
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? 'Good Morning' : currentHour < 18 ? 'Good Afternoon' : 'Good Evening';
 
