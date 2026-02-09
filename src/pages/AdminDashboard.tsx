@@ -1665,7 +1665,7 @@ const AdminDashboard: React.FC = () => {
              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-xs font-bold text-white">A</div>
              <div className="flex-1 overflow-hidden">
                 <p className="text-sm font-semibold text-white truncate">Administrator</p>
-                <p className="text-[10px] text-slate-400 truncate">admin@medcare.com</p>
+                <p className="text-[10px] text-slate-400 truncate">pvu7999@gmail.com</p>
              </div>
          </div>
       </aside>
@@ -1889,7 +1889,7 @@ const AdminDashboard: React.FC = () => {
                      onChange={(e) => setCurrentDrug({ ...currentDrug, form: e.target.value })}
                      className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-all"
                   >
-                     {['Tablet', 'Capsule', 'Syrup', 'Injection', 'Gel', 'Cream', 'Drops', 'Inhaler', 'Powder'].map(f => (
+                     {['Tablet', 'Capsule','Inhaler', 'Syrup', 'Injection', 'Gel', 'Cream', 'Drops', 'Inhaler', 'Powder'].map(f => (
                         <option key={f} value={f}>{f}</option>
                      ))}
                   </select>
@@ -1911,7 +1911,7 @@ const AdminDashboard: React.FC = () => {
                      onChange={(e) => setCurrentDrug({ ...currentDrug, unit: e.target.value })}
                      className="w-full px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white transition-all"
                   >
-                     {['tablet', 'bottle', 'packet', 'ml', 'strip', 'tube', 'vial'].map(u => (
+                     {['tablet','capsule','inhaler', 'bottle', 'packet', 'ml', 'strip', 'tube', 'vial'].map(u => (
                         <option key={u} value={u}>{u}</option>
                      ))}
                   </select>
