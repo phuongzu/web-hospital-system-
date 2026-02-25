@@ -139,6 +139,7 @@ export interface Message {
   isMe?: boolean; // Helper for UI
   text?: string; // Helper for UI
   time?: string; // Helper for UI
+  isDeleted: boolean; // Helper for UI
 }
 
 export interface Conversation {

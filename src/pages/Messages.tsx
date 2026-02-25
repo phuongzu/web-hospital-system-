@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import io from 'socket.io-client';
+import io, { Socket } from 'socket.io-client';
 import EmojiPicker, { EmojiClickData } from 'emoji-picker-react';
 import { API_BASE_URL, SOCKET_URL, getAuthToken, getDoctorId, getAvatarUrl, redirectToLoginPage } from '../utils/api';
 
@@ -30,11 +30,12 @@ interface Message {
   read?: boolean;
   timestamp?: string | number | Date;
   createdAt?: string;
-  // CRUD & Reactions
   edited?: boolean;
   deleted?: boolean;
   reactions?: Reaction[];
   reactions_count?: number;
+  _temp?: boolean; // Đánh dấu tin nhắn tạm thời
+  _failed?: boolean; // Đánh dấu tin nhắn gửi thất bại
 }
 
 interface Conversation {
@@ -46,10 +47,18 @@ interface Conversation {
   medical_record_id?: string;
 }
 
+// --- Constants ---
+const MESSAGE_TIMEOUT = 3000; // 3 seconds
+const MAX_RETRY_COUNT = 2;
+const TYPING_TIMEOUT = 2000; // 2 seconds
+
 // --- Helper Components ---
 
 const ActionButton = ({ icon, onClick, color = "text-slate-400", hoverColor = "hover:text-blue-600" }: any) => (
-  <button onClick={(e) => { e.stopPropagation(); onClick(); }} className={`p-1.5 rounded-full hover:bg-slate-100 transition-colors ${color} ${hoverColor}`}>
+  <button 
+    onClick={(e) => { e.stopPropagation(); onClick(); }} 
+    className={`p-1.5 rounded-full hover:bg-slate-100 transition-colors ${color} ${hoverColor}`}
+  >
     <span className="material-symbols-outlined text-[18px] md:text-[20px]">{icon}</span>
   </button>
 );
@@ -65,33 +74,30 @@ const Messages: React.FC = () => {
   const [sending, setSending] = useState(false);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
-
-  // Input Emoji Picker
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
-  
-  // Action States
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [editInput, setEditInput] = useState('');
-  const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null); // If not null, show picker for this message
+  const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState<Map<string, number>>(new Map());
 
   // --- Refs ---
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<any>(null);
   const selectedConvRef = useRef<Conversation | null>(null);
-  const handlerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const emojiRef = useRef<HTMLDivElement>(null); // For input emoji picker
-  const reactionPickerRef = useRef<HTMLDivElement>(null); // For message reaction picker
-  const typingTimeoutRef = useRef<any>(null);
-  const doctorId = getDoctorId();
+  const emojiRef = useRef<HTMLDivElement>(null);
+  const reactionPickerRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const messageQueueRef = useRef<Map<string, { message: Message; data: any; retries: number }>>(new Map());
+  const pendingMessagesRef = useRef<Set<string>>(new Set());
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Track optimistic messages
-  const pendingMessageIds = useRef<Set<string>>(new Set());
-  const pendingSocketMessages = useRef<Map<string, { resolve: Function, reject: Function }>>(new Map());
+  const doctorId = getDoctorId();
 
   // --- Effects ---
 
+  // Update ref when selected conversation changes
   useEffect(() => {
     selectedConvRef.current = selectedConv;
   }, [selectedConv]);
@@ -99,11 +105,9 @@ const Messages: React.FC = () => {
   // Handle click outside emoji pickers
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      // Input Emoji Picker
       if (emojiRef.current && !emojiRef.current.contains(event.target as Node)) {
         setShowInputEmojiPicker(false);
       }
-      // Message Reaction Picker
       if (reactionPickerRef.current && !reactionPickerRef.current.contains(event.target as Node)) {
         setReactingToMessageId(null);
       }
@@ -119,6 +123,12 @@ const Messages: React.FC = () => {
         socketRef.current.removeAllListeners();
         socketRef.current.disconnect();
         socketRef.current = null;
+      }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
       }
     };
   }, []);
@@ -155,12 +165,16 @@ const Messages: React.FC = () => {
     return `${API_BASE_URL}${url}`;
   };
 
-  const scrollToBottom = useCallback(() => {
-    if (messagesEndRef.current) {
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      });
+  const debouncedScrollToBottom = useCallback(() => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
     }
+    scrollTimeoutRef.current = setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      scrollTimeoutRef.current = null;
+    }, 100);
   }, []);
 
   const markAsReadAPI = useCallback(async (conversationId: string) => {
@@ -170,127 +184,51 @@ const Messages: React.FC = () => {
         method: 'PATCH',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-    } catch (e) { console.error('Read error:', e); }
+    } catch (e) { 
+      // Silent fail - không ảnh hưởng UX
+    }
   }, []);
 
-  // --- API Handlers (CRUD) ---
+  // Process message queue
+  const processMessageQueue = useCallback(async () => {
+    if (messageQueueRef.current.size === 0 || !socketRef.current?.connected) return;
 
-  const handleDeleteMessage = async (messageId: string, type: 'me' | 'everyone') => {
-    const ok = window.confirm(
-      type === 'everyone'
-        ? 'Delete for everyone?'
-        : 'Delete for me?'
-    );
-
-  if (!ok) return;
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
-        method: 'DELETE',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ type })
-      });
-
-      if (res.ok) {
-        // Optimistic update
-        setMessages(prev => prev.map(m => {
-          if (m._id !== messageId) return m;
-          if (type === 'everyone') {
-            return { ...m, deleted: true, message: 'This message was deleted' };
-          } else {
-            // Delete for me - remove from list
-            return { ...m, _hidden: true } as any; 
-          }
-        }).filter(m => !(m as any)._hidden));
-      }
-    } catch (error) {
-      console.error('Delete failed', error);
-      alert('Failed to delete message');
-    }
-  };
-
-  const handleEditMessage = async () => {
-    if (!editingMessage || !editInput.trim()) return;
+    const queueArray = Array.from(messageQueueRef.current.entries());
     
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
-        method: 'PATCH',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ newMessage: editInput })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        // Optimistic update
+    for (const [tempId, { message, data, retries }] of queueArray) {
+      if (retries >= MAX_RETRY_COUNT) {
+        // Mark as failed after max retries
         setMessages(prev => prev.map(m => 
-          m._id === editingMessage._id ? { ...m, message: editInput, edited: true } : m
+          m._id === tempId ? { ...m, _failed: true } : m
         ));
-        setEditingMessage(null);
-        setEditInput('');
+        messageQueueRef.current.delete(tempId);
+        continue;
       }
-    } catch (error) {
-      console.error('Edit failed', error);
-      alert('Failed to edit message');
-    }
-  };
 
-  const handleReaction = async (messageId: string, emoji: string) => {
-    try {
-      const token = getAuthToken();
-      setReactingToMessageId(null); // Close picker immediately
-
-      // Optimistic update
-      setMessages(prev => prev.map(m => {
-        if (m._id !== messageId) return m;
-        
-        // Clone reactions
-        const currentReactions = [...(m.reactions || [])];
-        const userId = doctorId; // Assuming doctorId is current user ID
-        
-        // Check if reaction exists
-        const existingIdx = currentReactions.findIndex(r => {
-          const rUserId = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
-          return rUserId === userId && r.emoji === emoji;
-        });
-
-        if (existingIdx > -1) {
-          // Remove
-          currentReactions.splice(existingIdx, 1);
-        } else {
-          // Add
-          currentReactions.push({
-            user_id: { _id: userId, name: 'You' } as any, // Mock user object
-            emoji
-          });
+      try {
+        const result = await sendViaSocket(tempId, data);
+        if (result) {
+          // Success - update message ID
+          setMessages(prev => prev.map(m => 
+            m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m
+          ));
+          messageQueueRef.current.delete(tempId);
         }
-
-        return { ...m, reactions: currentReactions };
-      }));
-
-      await fetch(`${API_BASE_URL}/messages/messages/${messageId}/react`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ reaction: emoji })
-      });
-    } catch (error) {
-      console.error('Reaction failed', error);
+      } catch (error) {
+        // Increment retry count and leave in queue
+        messageQueueRef.current.set(tempId, { 
+          message, 
+          data, 
+          retries: retries + 1 
+        });
+      }
     }
-  };
+  }, []);
 
   // --- Socket Handlers ---
 
   const handleTyping = useCallback((data: any) => {
-    if (!selectedConv || data.conversationId !== selectedConv._id) return;
+    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
     
     const { userId, isTyping } = data;
     
@@ -303,23 +241,23 @@ const Messages: React.FC = () => {
       }
       return newSet;
     });
-  }, [selectedConv]);
+  }, []);
 
   const handleMessagesRead = useCallback((data: any) => {
-    if (!selectedConv || data.conversationId !== selectedConv._id) return;
+    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
     setMessages(prev => prev.map(msg => 
       getSenderId(msg.sender_id) !== doctorId ? { ...msg, read: true } : msg
     ));
-  }, [selectedConv, doctorId]);
+  }, [doctorId]);
 
-  handlerRef.current = (rawMsg: any) => {
+  const handleNewMessage = useCallback((rawMsg: any) => {
     if (!rawMsg) return;
 
     const convId = rawMsg.conversationId || rawMsg.conversation_id;
     
     // Skip if this is a pending message we already handled
-    if (pendingMessageIds.current.has(rawMsg._id)) {
-      pendingMessageIds.current.delete(rawMsg._id);
+    if (pendingMessagesRef.current.has(rawMsg._id)) {
+      pendingMessagesRef.current.delete(rawMsg._id);
       return;
     }
 
@@ -361,7 +299,7 @@ const Messages: React.FC = () => {
         const sId = getSenderId(normalizedMsg.sender_id);
         if (sId === doctorId) {
           const tempIdx = prev.findIndex(m => 
-            m._id.startsWith('temp_') && m.message === normalizedMsg.message
+            m._temp && m.message === normalizedMsg.message
           );
           if (tempIdx !== -1) {
             const newMsgs = [...prev];
@@ -372,22 +310,29 @@ const Messages: React.FC = () => {
         return [...prev, normalizedMsg];
       });
       markAsReadAPI(convId);
-      setTimeout(scrollToBottom, 50);
+      debouncedScrollToBottom();
     }
-  };
+  }, [doctorId, markAsReadAPI, debouncedScrollToBottom]);
 
   // --- Socket Connection ---
 
   const connectSocket = useCallback(() => {
     const token = getAuthToken();
-    if (!token || socketRef.current) return;
+    if (!token || socketRef.current?.connected) return socketRef.current;
+
+    if (socketRef.current) {
+      socketRef.current.removeAllListeners();
+      socketRef.current.disconnect();
+    }
 
     const socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket'],
       reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000
     });
     
     socketRef.current = socket;
@@ -398,12 +343,22 @@ const Messages: React.FC = () => {
       if (selectedConvRef.current) {
         socket.emit('join_conversation', selectedConvRef.current._id);
       }
+      // Process queue when reconnected
+      processMessageQueue();
     });
     
-    socket.on('disconnect', () => setIsSocketConnected(false));
+    socket.on('disconnect', () => {
+      console.log('❌ Socket disconnected');
+      setIsSocketConnected(false);
+    });
+
+    socket.on('connect_error', (error: any) => {
+      console.error('Socket connection error:', error);
+      setIsSocketConnected(false);
+    });
     
     // Main message handler
-    socket.on('new_message', (data: any) => handlerRef.current?.(data));
+    socket.on('new_message', handleNewMessage);
 
     // CRUD & Reaction Events
     socket.on('message_edited', (data: any) => {
@@ -435,26 +390,23 @@ const Messages: React.FC = () => {
 
     socket.on('message_sent_success', (response: any) => {
       if (response.messageId && response.tempId) {
-        setMessages(prev => prev.map(m => m._id === response.tempId ? { ...m, _id: response.messageId } : m));
-        pendingMessageIds.current.add(response.messageId);
-      }
-      if (response.tempId && pendingSocketMessages.current.has(response.tempId)) {
-        const { resolve } = pendingSocketMessages.current.get(response.tempId)!;
-        resolve(response);
-        pendingSocketMessages.current.delete(response.tempId);
+        setMessages(prev => prev.map(m => 
+          m._id === response.tempId ? { ...m, _id: response.messageId, _temp: false } : m
+        ));
+        pendingMessagesRef.current.add(response.messageId);
       }
     });
 
     socket.on('message_error', (error: any) => {
-      if (error.tempId && pendingSocketMessages.current.has(error.tempId)) {
-        const { reject } = pendingSocketMessages.current.get(error.tempId)!;
-        reject(new Error(error.error || 'Socket message failed'));
-        pendingSocketMessages.current.delete(error.tempId);
+      if (error.tempId) {
+        setMessages(prev => prev.map(m => 
+          m._id === error.tempId ? { ...m, _failed: true } : m
+        ));
       }
     });
 
     return socket;
-  }, [handleTyping, handleMessagesRead]);
+  }, [handleTyping, handleMessagesRead, handleNewMessage, processMessageQueue]);
 
   // --- API Calls (Fetch) ---
 
@@ -476,7 +428,11 @@ const Messages: React.FC = () => {
           ));
         }
       }
-    } catch (e) { console.error(e); } finally { setLoading(false); }
+    } catch (e) { 
+      console.error('Fetch conversations error:', e);
+    } finally { 
+      setLoading(false); 
+    }
   }, []);
 
   const fetchMessages = useCallback(async (conversationId: string) => {
@@ -495,11 +451,15 @@ const Messages: React.FC = () => {
             socketRef.current.emit('join_conversation', conversationId);
             socketRef.current.emit('messages_read', { conversationId });
           }
-          setTimeout(scrollToBottom, 100);
+          debouncedScrollToBottom();
         }
       }
-    } catch (e) { console.error(e); } finally { setMessagesLoading(false); }
-  }, [markAsReadAPI, scrollToBottom]);
+    } catch (e) { 
+      console.error('Fetch messages error:', e);
+    } finally { 
+      setMessagesLoading(false); 
+    }
+  }, [markAsReadAPI, debouncedScrollToBottom]);
 
   // --- Initialization ---
 
@@ -509,8 +469,19 @@ const Messages: React.FC = () => {
       return; 
     }
     fetchConversations();
-    connectSocket();
-  }, [doctorId, connectSocket, fetchConversations]);
+    const socket = connectSocket();
+    
+    // Set up interval to process queue
+    const queueInterval = setInterval(processMessageQueue, 1000);
+    
+    return () => {
+      clearInterval(queueInterval);
+      if (socket) {
+        socket.removeAllListeners();
+        socket.disconnect();
+      }
+    };
+  }, [doctorId, connectSocket, fetchConversations, processMessageQueue]);
 
   useEffect(() => {
     if (selectedConv) {
@@ -520,26 +491,36 @@ const Messages: React.FC = () => {
   }, [selectedConv, fetchMessages]);
 
   useEffect(() => { 
-    if (messages.length > 0) scrollToBottom();
-  }, [messages, scrollToBottom]);
+    if (messages.length > 0) debouncedScrollToBottom();
+  }, [messages, debouncedScrollToBottom]);
 
   // --- Input Handlers ---
 
   const handleTypingStart = useCallback(() => {
-    if (!selectedConv || !socketRef.current?.connected) return;
-    socketRef.current.emit('typing_start', { conversationId: selectedConv._id });
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => handleTypingStop(), 3000);
-  }, [selectedConv]);
+    if (!selectedConvRef.current || !socketRef.current?.connected) return;
+    socketRef.current.emit('typing_start', { conversationId: selectedConvRef.current._id });
+    
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    
+    typingTimeoutRef.current = setTimeout(() => {
+      if (socketRef.current?.connected && selectedConvRef.current) {
+        socketRef.current.emit('typing_stop', { conversationId: selectedConvRef.current._id });
+      }
+      typingTimeoutRef.current = null;
+    }, TYPING_TIMEOUT);
+  }, []);
 
   const handleTypingStop = useCallback(() => {
-    if (!selectedConv || !socketRef.current?.connected) return;
-    socketRef.current.emit('typing_stop', { conversationId: selectedConv._id });
+    if (!selectedConvRef.current || !socketRef.current?.connected) return;
+    socketRef.current.emit('typing_stop', { conversationId: selectedConvRef.current._id });
+    
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
     }
-  }, [selectedConv]);
+  }, []);
 
   const handleInputEmojiClick = (emojiData: EmojiClickData) => {
     setInput(prev => prev + emojiData.emoji);
@@ -553,28 +534,37 @@ const Messages: React.FC = () => {
 
   // --- Send Logic ---
 
-  const sendViaSocket = async (tempId: string, messageData: any): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      if (!socketRef.current?.connected) {
-        reject(new Error('Socket not connected'));
-        return;
-      }
-      pendingSocketMessages.current.set(tempId, { resolve, reject });
-      socketRef.current.emit('send_message', { ...messageData, tempId });
-      setTimeout(() => {
-        if (pendingSocketMessages.current.has(tempId)) {
-          pendingSocketMessages.current.delete(tempId);
+  const sendViaSocket = (tempId: string, messageData: any): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (!socketRef.current?.connected) {
+      reject(new Error('Socket not connected'));
+      return;
+    }
+
+    socketRef.current.timeout(5000).emit(
+      'send_message',
+      { ...messageData, tempId },
+      (err: any, response: any) => {
+        if (err) {
           reject(new Error('Socket timeout'));
+          return;
         }
-      }, 5000);
-    });
-  };
+
+        if (response?.success) {
+          resolve(response);
+        } else {
+          reject(new Error(response?.error || 'Failed'));
+        }
+      }
+    );
+  });
+};
 
   const handleSendText = async () => {
     if (!input.trim() || !selectedConv || sending) return;
     
     const messageText = input.trim();
-    const tempId = `temp_${Date.now()}`;
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     const tempMsg: Message = {
       _id: tempId,
@@ -584,7 +574,8 @@ const Messages: React.FC = () => {
       message: messageText,
       message_type: 'text',
       read: false,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      _temp: true
     };
     
     setMessages(prev => [...prev, tempMsg]);
@@ -592,7 +583,6 @@ const Messages: React.FC = () => {
     setShowInputEmojiPicker(false);
     handleTypingStop();
     setSending(true);
-    setTimeout(scrollToBottom, 50);
 
     const messageData = {
       conversationId: selectedConv._id,
@@ -601,33 +591,51 @@ const Messages: React.FC = () => {
       messageType: 'text'
     };
 
+    // Try socket first
     try {
       const result = await sendViaSocket(tempId, messageData);
-      console.log('✅ Message sent via socket:', result);
+      setMessages(prev => prev.map(m => 
+        m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m
+      ));
     } catch (socketError) {
-      console.warn('Socket failed, trying REST API:', socketError);
+      console.warn('Socket failed, adding to queue:', socketError);
+      
+      // Add to queue for retry
+      messageQueueRef.current.set(tempId, { 
+        message: tempMsg, 
+        data: messageData, 
+        retries: 0 
+      });
+      
+      // Try REST API as fallback
       try {
         const token = getAuthToken();
         const res = await fetch(`${API_BASE_URL}/messages/send`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Authorization': `Bearer ${token}` 
+          },
           body: JSON.stringify({
             receiver_id: selectedConv.participant._id,
             message: messageText,
             message_type: 'text'
           })
         });
+        
         if (res.ok) {
           const result = await res.json();
           if (result.success && result.data?.message?._id) {
-            setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: result.data.message._id } : m));
-            pendingMessageIds.current.add(result.data.message._id);
+            setMessages(prev => prev.map(m => 
+              m._id === tempId ? { ...m, _id: result.data.message._id, _temp: false } : m
+            ));
+            pendingMessagesRef.current.add(result.data.message._id);
+            messageQueueRef.current.delete(tempId);
           }
         }
       } catch (restError) {
         console.error('REST API also failed:', restError);
-        setMessages(prev => prev.filter(m => m._id !== tempId));
-        alert('Failed to send message.');
+        // Keep in queue for retry
       }
     } finally {
       setSending(false);
@@ -637,10 +645,14 @@ const Messages: React.FC = () => {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConv || sending) return;
-    if (file.size > 10 * 1024 * 1024) { alert("File is too large (Max 10MB)"); return; }
+    
+    if (file.size > 10 * 1024 * 1024) { 
+      alert("File is too large (Max 10MB)"); 
+      return; 
+    }
 
     const isImage = file.type.startsWith('image/');
-    const tempId = `temp_media_${Date.now()}`;
+    const tempId = `temp_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const blobUrl = URL.createObjectURL(file);
     
     const tempMsg: Message = {
@@ -653,17 +665,20 @@ const Messages: React.FC = () => {
       media_url: blobUrl,
       media_name: file.name,
       read: false,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      _temp: true
     };
 
     setMessages(prev => [...prev, tempMsg]);
-    setTimeout(scrollToBottom, 50);
+    debouncedScrollToBottom();
     setSending(true);
 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('receiver_id', selectedConv.participant._id);
-    if (selectedConv.medical_record_id) formData.append('medical_record_id', selectedConv.medical_record_id.toString());
+    if (selectedConv.medical_record_id) {
+      formData.append('medical_record_id', selectedConv.medical_record_id.toString());
+    }
     
     try {
       const token = getAuthToken();
@@ -676,18 +691,128 @@ const Messages: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data?._id) {
-          setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: data.data._id, media_url: data.data.media_url } : m));
-          pendingMessageIds.current.add(data.data._id);
-          URL.revokeObjectURL(blobUrl);
+          setMessages(prev => prev.map(m => 
+            m._id === tempId ? { ...m, _id: data.data._id, media_url: data.data.media_url, _temp: false } : m
+          ));
+          pendingMessagesRef.current.add(data.data._id);
         }
       }
     } catch (err) {
-      console.error(err);
-      setMessages(prev => prev.filter(m => m._id !== tempId));
+      console.error('File upload error:', err);
+      setMessages(prev => prev.map(m => 
+        m._id === tempId ? { ...m, _failed: true } : m
+      ));
       alert("Failed to send file");
     } finally {
       setSending(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      URL.revokeObjectURL(blobUrl);
+    }
+  };
+
+  // --- CRUD Handlers ---
+
+  const handleDeleteMessage = async (messageId: string, type: 'me' | 'everyone') => {
+    const ok = window.confirm(
+      type === 'everyone'
+        ? 'Delete for everyone?'
+        : 'Delete for me?'
+    );
+
+    if (!ok) return;
+    
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ type })
+      });
+
+      if (res.ok) {
+        if (type === 'everyone') {
+          setMessages(prev => prev.map(m => 
+            m._id === messageId ? { ...m, deleted: true, message: 'This message was deleted' } : m
+          ));
+        } else {
+          setMessages(prev => prev.filter(m => m._id !== messageId));
+        }
+      }
+    } catch (error) {
+      console.error('Delete failed', error);
+      alert('Failed to delete message');
+    }
+  };
+
+  const handleEditMessage = async () => {
+    if (!editingMessage || !editInput.trim()) return;
+    
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
+        method: 'PATCH',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ newMessage: editInput })
+      });
+
+      if (res.ok) {
+        setMessages(prev => prev.map(m => 
+          m._id === editingMessage._id ? { ...m, message: editInput, edited: true } : m
+        ));
+        setEditingMessage(null);
+        setEditInput('');
+      }
+    } catch (error) {
+      console.error('Edit failed', error);
+      alert('Failed to edit message');
+    }
+  };
+
+  const handleReaction = async (messageId: string, emoji: string) => {
+    try {
+      const token = getAuthToken();
+      setReactingToMessageId(null);
+
+      // Optimistic update
+      setMessages(prev => prev.map(m => {
+        if (m._id !== messageId) return m;
+        
+        const currentReactions = [...(m.reactions || [])];
+        const userId = doctorId;
+        
+        const existingIdx = currentReactions.findIndex(r => {
+          const rUserId = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
+          return rUserId === userId && r.emoji === emoji;
+        });
+
+        if (existingIdx > -1) {
+          currentReactions.splice(existingIdx, 1);
+        } else {
+          currentReactions.push({
+            user_id: { _id: userId, name: 'You' } as any,
+            emoji
+          });
+        }
+
+        return { ...m, reactions: currentReactions };
+      }));
+
+      await fetch(`${API_BASE_URL}/messages/messages/${messageId}/react`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ reaction: emoji })
+      });
+    } catch (error) {
+      console.error('Reaction failed', error);
     }
   };
 
@@ -697,6 +822,7 @@ const Messages: React.FC = () => {
     const isMe = getSenderId(msg.sender_id) === doctorId;
     const isDeleted = msg.deleted;
     const isHovered = hoveredMessageId === msg._id;
+    const isFailed = msg._failed;
 
     // Group reactions
     const groupedReactions: { [key: string]: { count: number, reactedByMe: boolean } } = {};
@@ -715,11 +841,11 @@ const Messages: React.FC = () => {
       >
         <div className={`max-w-[85%] md:max-w-[70%] flex flex-col ${isMe ? 'items-end' : 'items-start'} relative`}>
           
-          {/* Action Menu (Desktop Hover / Mobile Click) */}
-          {!isDeleted && (
+          {/* Action Menu - Chỉ hiển thị khi không phải tin nhắn tạm thời */}
+          {!isDeleted && !msg._temp && (
             <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} z-10 bg-white shadow-lg rounded-full px-2 py-1 flex gap-1 transition-opacity duration-200 border border-slate-100 ${isHovered || reactingToMessageId === msg._id ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
               <ActionButton icon="add_reaction" onClick={() => setReactingToMessageId(msg._id)} />
-              {isMe && msg.message_type === 'text' && (
+              {isMe && msg.message_type === 'text' && !isFailed && (
                 <ActionButton icon="edit" onClick={() => { setEditingMessage(msg); setEditInput(msg.message); }} />
               )}
               {(isMe) && (
@@ -750,6 +876,7 @@ const Messages: React.FC = () => {
               ? 'rounded-2xl p-1 bg-white border border-slate-200' 
               : `px-4 py-3 md:px-6 md:py-4 rounded-[1.5rem] md:rounded-[2rem] ${
                   isDeleted ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
+                  isFailed ? 'bg-rose-50 text-rose-600 border border-rose-200' :
                   isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
                 }`
           }`}>
@@ -762,13 +889,22 @@ const Messages: React.FC = () => {
               </div>
             )}
 
+            {/* Failed Message */}
+            {isFailed && !isDeleted && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="material-symbols-outlined text-lg">error</span>
+                <span>Failed to send - Will retry</span>
+              </div>
+            )}
+
             {/* Normal Content */}
-            {!isDeleted && (
+            {!isDeleted && !isFailed && (
               <>
                 {msg.message_type === 'text' && (
                   <div className="text-[14px] md:text-[15px] font-medium leading-relaxed whitespace-pre-wrap">
                     {msg.message}
                     {msg.edited && <span className="text-[10px] opacity-60 ml-2 italic">(edited)</span>}
+                    {msg._temp && <span className="text-[10px] opacity-60 ml-2">(sending...)</span>}
                   </div>
                 )}
 
@@ -783,6 +919,11 @@ const Messages: React.FC = () => {
                     <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer" className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
                       <span className="material-symbols-outlined text-white text-3xl">open_in_new</span>
                     </a>
+                    {msg._temp && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl">
+                        <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -804,7 +945,7 @@ const Messages: React.FC = () => {
           </div>
 
           {/* Reactions Display */}
-          {!isDeleted && msg.reactions && msg.reactions.length > 0 && (
+          {!isDeleted && !isFailed && msg.reactions && msg.reactions.length > 0 && (
             <div className={`flex gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'} flex-wrap max-w-full px-2`}>
               {Object.entries(groupedReactions).map(([emoji, data]) => (
                 <button 
@@ -822,7 +963,11 @@ const Messages: React.FC = () => {
           {/* Meta Info */}
           <div className="mt-1 md:mt-2 text-[10px] font-black opacity-60 flex items-center gap-1 md:gap-2 px-1">
             {safeFormatTime(msg.timestamp)}
-            {isMe && !isDeleted && <span className="material-symbols-outlined text-[12px] md:text-[14px]">{msg.read ? 'done_all' : 'done'}</span>}
+            {isMe && !isDeleted && !isFailed && (
+              <span className="material-symbols-outlined text-[12px] md:text-[14px]">
+                {msg.read ? 'done_all' : msg._temp ? 'pending' : 'done'}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -853,9 +998,9 @@ const Messages: React.FC = () => {
         </div>
       )}
 
-      {/* Sidebar - Hidden on mobile if chat is selected */}
+      {/* Sidebar */}
       <div className={`w-full md:w-80 lg:w-[400px] flex-col border-r border-slate-200 bg-white z-20 flex-shrink-0 ${selectedConv ? 'hidden md:flex' : 'flex'}`}>
-        {/* ... Sidebar Header ... */}
+        {/* Sidebar Header */}
         <div className="p-6 md:p-8 pb-4">
           <div className="flex items-center justify-between mb-6 md:mb-8">
             <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900">Chats</h1>
@@ -870,7 +1015,7 @@ const Messages: React.FC = () => {
           </div>
         </div>
 
-        {/* ... Conversation List ... */}
+        {/* Conversation List */}
         <div className="flex-1 overflow-y-auto px-4 pb-8 scrollbar-hide">
           {loading ? (
              <div className="flex flex-col items-center justify-center h-full opacity-40">
@@ -886,7 +1031,11 @@ const Messages: React.FC = () => {
               {conversations.map(conv => {
                 const isActive = selectedConv?._id === conv._id;
                 return (
-                  <div key={conv._id} onClick={() => setSelectedConv(conv)} className={`p-4 flex gap-4 cursor-pointer rounded-[2rem] md:rounded-[2.5rem] transition-all border-2 ${isActive ? 'bg-blue-600 border-blue-600 shadow-xl text-white' : 'hover:bg-slate-50 border-transparent'}`}>
+                  <div 
+                    key={conv._id} 
+                    onClick={() => setSelectedConv(conv)} 
+                    className={`p-4 flex gap-4 cursor-pointer rounded-[2rem] md:rounded-[2.5rem] transition-all border-2 ${isActive ? 'bg-blue-600 border-blue-600 shadow-xl text-white' : 'hover:bg-slate-50 border-transparent'}`}
+                  >
                     <img src={getAvatarUrl(conv.participant?.avatar)} className="w-12 h-12 md:w-14 md:h-14 rounded-[1.2rem] md:rounded-[1.6rem] object-cover" alt="" />
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-baseline">
@@ -915,7 +1064,13 @@ const Messages: React.FC = () => {
             {/* Header */}
             <header className="flex-none px-4 md:px-10 py-4 md:py-6 border-b border-slate-100 flex justify-between items-center bg-white/95 backdrop-blur-xl z-30 shadow-sm md:shadow-none">
               <div className="flex items-center gap-3 md:gap-5">
-                <button onClick={() => { setSelectedConv(null); setMessages([]); }} className="md:hidden p-2 -ml-2 text-slate-500 hover:bg-slate-50 rounded-full">
+                <button 
+                  onClick={() => { 
+                    setSelectedConv(null); 
+                    setMessages([]); 
+                  }} 
+                  className="md:hidden p-2 -ml-2 text-slate-500 hover:bg-slate-50 rounded-full"
+                >
                   <span className="material-symbols-outlined">arrow_back</span>
                 </button>
                 <div className="relative">
@@ -975,20 +1130,40 @@ const Messages: React.FC = () => {
             <div className="flex-none bg-white border-t border-slate-50 px-3 md:px-10 pt-3 pb-4 md:pb-8 z-20 safe-area-bottom">
               <div className="max-w-4xl mx-auto flex items-center gap-2 md:gap-3 bg-slate-50 md:bg-white md:border border-slate-200/80 rounded-3xl md:rounded-[2.5rem] p-2 md:p-3 md:shadow-xl transition-all relative">
                 
-                <input type="file" ref={fileInputRef} className="hidden" accept="image/*,.pdf,.doc,.docx,.txt" onChange={handleFileSelect} />
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept="image/*,.pdf,.doc,.docx,.txt" 
+                  onChange={handleFileSelect} 
+                />
 
-                <button onClick={() => fileInputRef.current?.click()} className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center hover:bg-slate-200 md:hover:bg-slate-100 text-slate-400 hover:text-blue-600 transition-colors flex-shrink-0" disabled={sending}>
+                <button 
+                  onClick={() => fileInputRef.current?.click()} 
+                  className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center hover:bg-slate-200 md:hover:bg-slate-100 text-slate-400 hover:text-blue-600 transition-colors flex-shrink-0" 
+                  disabled={sending}
+                >
                   <span className="material-symbols-outlined text-xl md:text-2xl">attach_file</span>
                 </button>
 
                 <div className="relative" ref={emojiRef}>
-                  <button onClick={() => setShowInputEmojiPicker(!showInputEmojiPicker)} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center hover:bg-slate-200 md:hover:bg-slate-100 transition-colors flex-shrink-0 ${showInputEmojiPicker ? 'text-yellow-500 bg-yellow-50' : 'text-slate-400 hover:text-yellow-500'}`} disabled={sending}>
+                  <button 
+                    onClick={() => setShowInputEmojiPicker(!showInputEmojiPicker)} 
+                    className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center hover:bg-slate-200 md:hover:bg-slate-100 transition-colors flex-shrink-0 ${showInputEmojiPicker ? 'text-yellow-500 bg-yellow-50' : 'text-slate-400 hover:text-yellow-500'}`} 
+                    disabled={sending}
+                  >
                     <span className="material-symbols-outlined text-xl md:text-2xl">sentiment_satisfied</span>
                   </button>
                   
                   {showInputEmojiPicker && (
                     <div className="absolute bottom-full left-0 mb-4 z-50 shadow-2xl rounded-2xl border border-slate-100 animate-fade-in-up">
-                      <EmojiPicker onEmojiClick={handleInputEmojiClick} width={300} height={400} searchDisabled={false} previewConfig={{ showPreview: false }} />
+                      <EmojiPicker 
+                        onEmojiClick={handleInputEmojiClick} 
+                        width={300} 
+                        height={400} 
+                        searchDisabled={false} 
+                        previewConfig={{ showPreview: false }} 
+                      />
                     </div>
                   )}
                 </div>
@@ -996,21 +1171,44 @@ const Messages: React.FC = () => {
                 <input 
                   value={input} 
                   onChange={handleInputChange}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
+                  onKeyDown={(e) => { 
+                    if (e.key === 'Enter' && !e.shiftKey) { 
+                      e.preventDefault(); 
+                      handleSendText(); 
+                    } 
+                  }}
                   onBlur={handleTypingStop}
                   placeholder="Type message..." 
                   className="flex-1 bg-transparent border-none px-2 py-3 md:py-4 outline-none font-medium text-[15px] md:text-[15px]" 
                   disabled={sending}
                 />
                 
-                <button onClick={handleSendText} disabled={!input.trim() || sending} className={`w-10 h-10 md:w-14 md:h-14 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${input.trim() ? 'bg-blue-600 text-white shadow-lg hover:bg-blue-700 active:scale-95' : 'bg-slate-200 md:bg-slate-100 text-slate-300'}`}>
-                  {sending ? <div className="w-4 h-4 md:w-5 md:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <span className="material-symbols-outlined font-bold text-lg md:text-xl">send</span>}
+                <button 
+                  onClick={handleSendText} 
+                  disabled={!input.trim() || sending} 
+                  className={`w-10 h-10 md:w-14 md:h-14 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${input.trim() ? 'bg-blue-600 text-white shadow-lg hover:bg-blue-700 active:scale-95' : 'bg-slate-200 md:bg-slate-100 text-slate-300'}`}
+                >
+                  {sending ? (
+                    <div className="w-4 h-4 md:w-5 md:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <span className="material-symbols-outlined font-bold text-lg md:text-xl">send</span>
+                  )}
                 </button>
               </div>
               
               <div className="mt-2 md:mt-3 text-center">
                 <div className="inline-flex items-center gap-2 text-[10px] md:text-xs text-slate-400 font-medium">
-                  {sending ? <><div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-blue-500 rounded-full animate-pulse"></div><span>Sending...</span></> : !isSocketConnected && <><div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-rose-500 rounded-full animate-pulse"></div><span>Disconnected - Using fallback</span></>}
+                  {sending ? (
+                    <>
+                      <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                      <span>Sending...</span>
+                    </>
+                  ) : !isSocketConnected && (
+                    <>
+                      <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-rose-500 rounded-full animate-pulse"></div>
+                      <span>Disconnected - Using queue</span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

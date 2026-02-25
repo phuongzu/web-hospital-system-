@@ -1,143 +1,237 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { 
-  Appointment, 
+import {
+  Appointment,
   Notification as NotificationType,
-  Stat, 
-  DoctorProfile, 
-  Consultation, 
-  Patient 
+  Stat,
+  DoctorProfile,
+  Consultation,
+  Patient
 } from '../types';
 import { getDoctorId, API_BASE_URL, formatDate } from '../utils/api';
 
 // ============= OPTIMIZATION HELPERS =============
-// Helper to compare appointments without JSON.stringify whole object
 const areAppointmentsEqual = (prev: Appointment[], next: Appointment[]) => {
   if (prev.length !== next.length) return false;
-  // Check crucial fields that affect UI: ID, Status, Time
-  return prev.every((p, i) => 
-    p._id === next[i]._id && 
-    p.status === next[i].status && 
+  return prev.every((p, i) =>
+    p._id === next[i]._id &&
+    p.status === next[i].status &&
     p.time_slot === next[i].time_slot
   );
 };
 
-// Helper to compare notifications
 const areNotificationsEqual = (prev: NotificationType[], next: NotificationType[]) => {
   if (prev.length !== next.length) return false;
-  // Check ID and Read status
   return prev.every((n, i) => n._id === next[i]._id && n.isRead === next[i].isRead);
 };
 
-// ============= TOAST NOTIFICATION COMPONENT =============
-// OPTIMIZATION: Memoize to prevent re-render when parent state (like stats) changes
-const ToastNotification = React.memo(({ notification, onClose, navigate }: { 
-  notification: NotificationType, 
-  onClose: () => void,
-  navigate: any 
+// ============= TOAST TYPES =============
+interface ToastItem {
+  id: string;
+  notification: NotificationType;
+  entering: boolean;
+  leaving: boolean;
+}
+
+// ============= ICON & COLOR HELPERS (shared) =============
+const getNotificationIcon = (type: string) => {
+  switch (type) {
+    case 'appointment': return 'event';
+    case 'alert': return 'warning';
+    case 'message': return 'mail';
+    case 'consultation': return 'medical_services';
+    case 'success': return 'check_circle';
+    case 'emergency': return 'emergency';
+    case 'reminder': return 'notifications_active';
+    case 'approval_request': return 'approval';
+    default: return 'notifications';
+  }
+};
+
+const getTypeAccentClass = (type: string) => {
+  switch (type) {
+    case 'appointment': return 'bg-blue-500';
+    case 'alert': return 'bg-rose-500';
+    case 'message': return 'bg-purple-500';
+    case 'consultation': return 'bg-indigo-500';
+    case 'emergency': return 'bg-red-600';
+    case 'success': return 'bg-emerald-500';
+    case 'approval_request': return 'bg-amber-500';
+    case 'reminder': return 'bg-cyan-500';
+    default: return 'bg-slate-500';
+  }
+};
+
+const getTypeIconBg = (type: string) => {
+  switch (type) {
+    case 'appointment': return 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400';
+    case 'alert': return 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400';
+    case 'message': return 'bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400';
+    case 'consultation': return 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400';
+    case 'emergency': return 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400';
+    case 'success': return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400';
+    case 'approval_request': return 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400';
+    default: return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
+  }
+};
+
+// ============= SINGLE TOAST ITEM COMPONENT =============
+const ToastItemCard = React.memo(({ item, onClose, navigate, index, total }: {
+  item: ToastItem;
+  onClose: (id: string) => void;
+  navigate: any;
+  index: number;
+  total: number;
 }) => {
-  const [isVisible, setIsVisible] = useState(true);
+  const [progress, setProgress] = useState(100);
+  const DURATION = 6000;
 
+  // Shrinking progress bar
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsVisible(false);
-      setTimeout(onClose, 300);
-    }, 5000);
+    const start = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, 100 - (elapsed / DURATION) * 100);
+      setProgress(remaining);
+      if (remaining > 0) requestAnimationFrame(tick);
+    };
+    const raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'appointment': return 'event';
-      case 'consultation': return 'medical_services';
-      case 'message': return 'chat';
-      case 'alert': return 'warning';
-      case 'success': return 'check_circle';
-      case 'emergency': return 'emergency';
-      case 'reminder': return 'notifications_active';
-      default: return 'notifications';
+  const handleAction = () => {
+    if (item.notification.data?.action_url) {
+      navigate(item.notification.data.action_url);
     }
+    onClose(item.id);
   };
 
-  const handleActionClick = () => {
-    if (notification.data?.action_url) {
-      navigate(notification.data.action_url);
-    }
-    onClose();
-  };
-
-  const formatTime = (dateString: string | Date) => {
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleTimeString([], { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-    } catch {
-      return 'Just now';
-    }
-  };
+  // Stack offset: cards behind peek from bottom
+  const stackOffset = (total - 1 - index) * 8;
+  const stackScale = 1 - (total - 1 - index) * 0.03;
 
   return (
-    <div className={`fixed top-6 right-6 z-[100] w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-4 transform transition-all duration-300 ease-out ${isVisible ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0'}`}>
-      <div className="flex items-start gap-4">
-        <div className={`flex-shrink-0 p-3 rounded-xl ${notification.isRead ? 'bg-slate-100 text-slate-500' : 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'}`}>
-          <span className="material-symbols-outlined text-2xl">
-            {getNotificationIcon(notification.type)}
-          </span>
+    <div
+      className={`
+        absolute bottom-0 left-0 right-0
+        transition-all duration-300 ease-out
+        ${item.entering ? 'translate-y-4 opacity-0 scale-95' : ''}
+        ${item.leaving ? 'translate-y-4 opacity-0 scale-95' : ''}
+        ${!item.entering && !item.leaving ? 'translate-y-0 opacity-100 scale-100' : ''}
+      `}
+      style={{
+        transform: `translateY(-${stackOffset}px) scale(${stackScale})`,
+        zIndex: index + 1,
+      }}
+    >
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Accent bar top */}
+        <div className={`h-0.5 ${getTypeAccentClass(item.notification.type)}`} />
+
+        <div className="p-4">
+          <div className="flex items-start gap-3">
+            {/* Icon */}
+            <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${getTypeIconBg(item.notification.type)}`}>
+              <span className="material-symbols-outlined text-xl">
+                {getNotificationIcon(item.notification.type)}
+              </span>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-2 mb-0.5">
+                <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                  {item.notification.type?.replace(/_/g, ' ') || 'Notification'}
+                </p>
+                <button
+                  onClick={() => onClose(item.id)}
+                  className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white leading-tight mb-1">
+                {item.notification.title}
+              </h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2">
+                {item.notification.message}
+              </p>
+
+              {item.notification.data?.action_label && (
+                <button
+                  onClick={handleAction}
+                  className={`mt-3 inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-wider px-3 py-1.5 rounded-lg transition-all ${getTypeAccentClass(item.notification.type)} text-white hover:opacity-90`}
+                >
+                  {item.notification.data.action_label}
+                  <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between">
-            <h4 className={`text-sm font-bold truncate pr-4 ${notification.isRead ? 'text-slate-600' : 'text-slate-900 dark:text-white'}`}>
-              {notification.title}
-            </h4>
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-1"
-              aria-label="Close"
-            >
-              <span className="material-symbols-outlined text-base">close</span>
-            </button>
-          </div>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-            {notification.message}
-          </p>
-          <div className="flex items-center justify-between mt-4">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
-              {formatTime(notification.createdAt)}
-            </span>
-            {notification.data?.action_label && (
-              <button
-                onClick={handleActionClick}
-                className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 transition-colors"
-              >
-                {notification.data.action_label}
-                <span className="material-symbols-outlined text-sm">arrow_forward</span>
-              </button>
-            )}
-          </div>
+
+        {/* Progress bar */}
+        <div className="h-0.5 bg-slate-100 dark:bg-slate-800">
+          <div
+            className={`h-full ${getTypeAccentClass(item.notification.type)} transition-none`}
+            style={{ width: `${progress}%` }}
+          />
         </div>
       </div>
     </div>
   );
 });
 
+// ============= TOAST STACK CONTAINER =============
+const ToastStack = React.memo(({ toasts, onClose, navigate }: {
+  toasts: ToastItem[];
+  onClose: (id: string) => void;
+  navigate: any;
+}) => {
+  if (toasts.length === 0) return null;
+
+  // Height of each card approx 130px, stack shows max 3
+  const visibleToasts = toasts.slice(-3);
+  const stackHeight = 130 + (visibleToasts.length - 1) * 8;
+
+  return (
+    <div
+      className="fixed bottom-6 right-6 z-[200] w-80"
+      style={{ height: stackHeight }}
+    >
+      {visibleToasts.map((item, index) => (
+        <ToastItemCard
+          key={item.id}
+          item={item}
+          onClose={onClose}
+          navigate={navigate}
+          index={index}
+          total={visibleToasts.length}
+        />
+      ))}
+
+      {/* "X more" badge if there are hidden toasts */}
+      {toasts.length > 3 && (
+        <div className="absolute -top-8 right-0 bg-slate-900 text-white text-[10px] font-black px-2 py-1 rounded-full">
+          +{toasts.length - 3} more
+        </div>
+      )}
+    </div>
+  );
+});
+
 // ============= STAT CARD COMPONENT =============
-// OPTIMIZATION: Memoize strictly. Only re-render if value/loading changes.
 const StatCard = React.memo(({ icon, label, value, change, color, isLoading, onClick }: any) => {
-  // Extracting from/to for the medical-grade subtle backgrounds
   const bgColorMap: Record<string, string> = {
     'from-blue-500 to-blue-700': 'bg-blue-600',
     'from-purple-500 to-purple-700': 'bg-indigo-600',
     'from-green-500 to-green-700': 'bg-emerald-600',
     'from-orange-500 to-orange-700': 'bg-rose-600',
   };
-
   const baseColor = bgColorMap[color] || 'bg-blue-600';
 
   return (
-    <div 
+    <div
       className={`relative overflow-hidden rounded-2xl p-6 ${baseColor} text-white shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 group cursor-pointer ${onClick ? 'active:scale-95' : ''}`}
       onClick={onClick}
     >
@@ -147,7 +241,7 @@ const StatCard = React.memo(({ icon, label, value, change, color, isLoading, onC
             <span className="material-symbols-outlined text-3xl">{icon}</span>
           </div>
           {change !== undefined && (
-            <div className={`flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/20 backdrop-blur-sm border border-white/10`}>
+            <div className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/20 backdrop-blur-sm border border-white/10">
               <span className="material-symbols-outlined text-xs">
                 {change >= 0 ? 'trending_up' : 'trending_down'}
               </span>
@@ -164,7 +258,6 @@ const StatCard = React.memo(({ icon, label, value, change, color, isLoading, onC
           )}
         </div>
       </div>
-      {/* Subtle abstract background pattern */}
       <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 transition-transform duration-700">
         <span className="material-symbols-outlined text-[120px]">{icon}</span>
       </div>
@@ -173,20 +266,14 @@ const StatCard = React.memo(({ icon, label, value, change, color, isLoading, onC
 });
 
 // ============= APPOINTMENT CARD COMPONENT =============
-// OPTIMIZATION: Memoize to avoid list re-renders during polling if this item didn't change
 const AppointmentCard = React.memo(({ appointment, onClick }: any) => {
   const getStatusStyle = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'confirmed':
-        return 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800/50';
-      case 'pending':
-        return 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800/50';
-      case 'completed':
-        return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800/50';
-      case 'cancelled':
-        return 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800/50';
-      default:
-        return 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700';
+      case 'confirmed': return 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800/50';
+      case 'pending': return 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800/50';
+      case 'completed': return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800/50';
+      case 'cancelled': return 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800/50';
+      default: return 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700';
     }
   };
 
@@ -204,7 +291,6 @@ const AppointmentCard = React.memo(({ appointment, onClick }: any) => {
             <span className="material-symbols-outlined text-[10px] text-blue-600 font-bold">timer</span>
           </div>
         </div>
-
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2 mb-1">
             <h4 className="font-bold text-slate-900 dark:text-white truncate group-hover:text-blue-600 transition-colors">
@@ -214,11 +300,9 @@ const AppointmentCard = React.memo(({ appointment, onClick }: any) => {
               {appointment.status}
             </span>
           </div>
-          
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-2 truncate">
             {appointment.reason || 'Routine Consultation'}
           </p>
-
           <div className="flex items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-md">
               <span className="material-symbols-outlined text-sm">schedule</span>
@@ -232,7 +316,6 @@ const AppointmentCard = React.memo(({ appointment, onClick }: any) => {
             )}
           </div>
         </div>
-
         <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all">
           <span className="material-symbols-outlined text-blue-600 text-xl">chevron_right</span>
         </div>
@@ -242,24 +325,18 @@ const AppointmentCard = React.memo(({ appointment, onClick }: any) => {
 });
 
 // ============= CONSULTATION CARD COMPONENT =============
-// OPTIMIZATION: Memoize to prevent re-renders when other dashboard parts update
 const ConsultationCard = React.memo(({ consultation, onClick }: any) => {
   const getSeverityColor = (severity: string) => {
     switch (severity?.toLowerCase()) {
-      case 'critical':
-        return 'text-rose-600 bg-rose-50 border-rose-100 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-900/50';
-      case 'severe':
-        return 'text-orange-600 bg-orange-50 border-orange-100 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-900/50';
-      case 'moderate':
-        return 'text-amber-600 bg-amber-50 border-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-900/50';
-      case 'mild':
-        return 'text-emerald-600 bg-emerald-50 border-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-900/50';
-      default:
-        return 'text-slate-600 bg-slate-50 border-slate-100 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700';
+      case 'critical': return 'text-rose-600 bg-rose-50 border-rose-100 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-900/50';
+      case 'severe': return 'text-orange-600 bg-orange-50 border-orange-100 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-900/50';
+      case 'moderate': return 'text-amber-600 bg-amber-50 border-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-900/50';
+      case 'mild': return 'text-emerald-600 bg-emerald-50 border-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-900/50';
+      default: return 'text-slate-600 bg-slate-50 border-slate-100 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700';
     }
   };
 
-  const completedSteps = consultation.treatment_plan?.filter((s: any) => 
+  const completedSteps = consultation.treatment_plan?.filter((s: any) =>
     s.status === 'approved' || s.status === 'completed'
   ).length || 0;
   const totalSteps = consultation.treatment_plan?.length || 0;
@@ -286,20 +363,18 @@ const ConsultationCard = React.memo(({ consultation, onClick }: any) => {
           {consultation.severity || 'N/A'}
         </span>
       </div>
-
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Treatment Progress</span>
           <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">{completedSteps}/{totalSteps}</span>
         </div>
         <div className="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-          <div 
+          <div
             className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-700 ease-out rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]"
             style={{ width: `${progress}%` }}
           />
         </div>
       </div>
-
       {consultation.notes && (
         <p className="text-xs text-slate-500 dark:text-slate-500 mt-4 line-clamp-2 italic border-l-2 border-slate-200 dark:border-slate-700 pl-3">
           "{consultation.notes}"
@@ -322,65 +397,114 @@ const Dashboard: React.FC = () => {
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
-  
-  // OPTIMIZATION: State indicating background refresh vs manual refresh
   const [refreshingNotifications, setRefreshingNotifications] = useState(false);
   const [refreshingAppointments, setRefreshingAppointments] = useState(false);
-  
+
+  // ============= TOAST STACK STATE =============
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  // Ref lưu IDs đã thấy — tránh hiện toast khi load lần đầu
+  const seenNotificationIds = useRef<Set<string>>(new Set());
+  const isFirstLoad = useRef(true);
+
   const [quickStats, setQuickStats] = useState({
     todayAppointments: 0,
     activeConsultations: 0,
     completedToday: 0,
     totalPatients: 0
   });
-  const [toastNotification, setToastNotification] = useState<NotificationType | null>(null);
-  const [showToast, setShowToast] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [lastAppointmentsUpdate, setLastAppointmentsUpdate] = useState(new Date());
-  const [pollingActive, setPollingActive] = useState(true);
+  const [pollingActive] = useState(true);
+
+  const notificationsRef = useRef<NotificationType[]>([]);
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
 
   const doctorId = getDoctorId();
 
-  // ============= NETWORK STATUS MONITORING =============
+  // ============= PUSH TOAST =============
+  const pushToast = useCallback((notification: NotificationType) => {
+    const id = `toast-${notification._id}-${Date.now()}`;
+
+    setToasts(prev => [
+      ...prev,
+      { id, notification, entering: true, leaving: false }
+    ]);
+
+    // Remove entering state after animation
+    setTimeout(() => {
+      setToasts(prev => prev.map(t => t.id === id ? { ...t, entering: false } : t));
+    }, 50);
+
+    // Auto-dismiss after 6s
+    setTimeout(() => {
+      setToasts(prev => prev.map(t => t.id === id ? { ...t, leaving: true } : t));
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, 300);
+    }, 6000);
+
+    // Play subtle notification sound (Web Audio API — no file needed)
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    } catch (_) {
+      // Silently ignore if audio not available
+    }
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, leaving: true } : t));
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 300);
+  }, []);
+
+  // ============= NETWORK STATUS =============
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
-  // ============= FETCH APPOINTMENTS (REAL-TIME POLLING) =============
-  // OPTIMIZATION: Added `isBackground` param to avoid setting loading state during background polls
+  // ============= FETCH APPOINTMENTS =============
   const fetchAppointments = useCallback(async (showNotification = false, isBackground = false) => {
     if (!doctorId) return;
-    
     try {
       if (!isBackground) setRefreshingAppointments(true);
       const today = new Date().toISOString().split('T')[0];
       const timestamp = new Date().getTime();
-      
-      const aptRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments?date=${today}&_t=${timestamp}`, {
-        headers: { 
-          'Authorization': `Bearer ${localStorage.getItem('token') || localStorage.getItem('accessToken')}`,
-          'Cache-Control': 'no-cache'
+      const aptRes = await fetch(
+        `${API_BASE_URL}/doctors/${doctorId}/appointments?date=${today}&_t=${timestamp}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token') || localStorage.getItem('accessToken')}`,
+            'Cache-Control': 'no-cache'
+          }
         }
-      });
-      
+      );
       if (!aptRes.ok) {
         console.error('❌ Failed to fetch appointments:', aptRes.status);
         if (!isBackground) setRefreshingAppointments(false);
         return;
       }
-      
       const aptData = await aptRes.json();
-      
       if (aptData.success && aptData.data) {
         const newAppointments = (aptData.data as Appointment[])
           .filter(a => a.status !== 'cancelled')
@@ -389,103 +513,65 @@ const Dashboard: React.FC = () => {
             const timeB = b.time_slot?.split(':').map(Number) || [0, 0];
             return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
           });
-        
+
         setAppointments(prev => {
-          // OPTIMIZATION: Check for equality before update to avoid re-renders
           const hasChanges = !areAppointmentsEqual(prev, newAppointments);
-          
-          if (!hasChanges) return prev; // Return same reference -> No re-render
-          
+          if (!hasChanges) return prev;
+
           if (showNotification && prev.length > 0) {
-            const newItems = newAppointments.filter(newApp => 
+            const newItems = newAppointments.filter(newApp =>
               !prev.some(oldApp => oldApp._id === newApp._id)
             );
-            
             const updatedItems = newAppointments.filter(newApp => {
               const oldApp = prev.find(old => old._id === newApp._id);
               return oldApp && oldApp.status !== newApp.status;
             });
-            
+
             if (newItems.length > 0) {
-              const latestNewAppointment = newItems[0];
-              const notification: NotificationType = {
-                _id: `appointment-new-${Date.now()}`,
-                title: 'New Booking',
-                message: `Patient ${latestNewAppointment.user_id?.name || 'Unknown'} has scheduled a new visit.`,
+              const latest = newItems[0];
+              pushToast({
+                _id: `apt-new-${Date.now()}`,
+                title: 'New Appointment Booked',
+                message: `${latest.user_id?.name || 'A patient'} scheduled a visit at ${latest.time_slot}.`,
                 type: 'appointment',
                 isRead: false,
                 createdAt: new Date().toISOString(),
-                data: {
-                  action_url: `/appointments/${latestNewAppointment._id}`,
-                  action_label: 'Review'
-                },
-                user_id: latestNewAppointment.user_id?._id || '',
-                doctor_id: latestNewAppointment.doctor_id || '',
-              };
-              
-              setToastNotification(notification);
-              setShowToast(true);
-              setTimeout(() => setShowToast(false), 5000);
+                data: { action_url: `/appointments/${latest._id}`, action_label: 'View' },
+                user_id: latest.user_id?._id || '',
+                doctor_id: latest.doctor_id || '',
+              });
             }
-            
-            if (updatedItems.length > 0) {
-              const latestUpdated = updatedItems[0];
-              let message = '';
-              
-              switch (latestUpdated.status) {
-                case 'confirmed':
-                  message = `Appointment with ${latestUpdated.user_id?.name || 'Patient'} is now confirmed.`;
-                  break;
-                case 'completed':
-                  message = `Visit with ${latestUpdated.user_id?.name || 'Patient'} has been successfully closed.`;
-                  break;
-                case 'cancelled':
-                  message = `Appointment with ${latestUpdated.user_id?.name || 'Patient'} was cancelled.`;
-                  break;
-              }
-              
-              if (message) {
-                const notification: NotificationType = {
-                  _id: `appointment-update-${Date.now()}`,
-                  title: 'Status Update',
-                  message,
+
+            updatedItems.forEach(updated => {
+              const msgMap: Record<string, string> = {
+                confirmed: `Appointment with ${updated.user_id?.name || 'Patient'} is confirmed.`,
+                completed: `Visit with ${updated.user_id?.name || 'Patient'} is completed.`,
+                cancelled: `Appointment with ${updated.user_id?.name || 'Patient'} was cancelled.`,
+              };
+              const msg = msgMap[updated.status];
+              if (msg) {
+                pushToast({
+                  _id: `apt-update-${Date.now()}`,
+                  title: 'Appointment Status Changed',
+                  message: msg,
                   type: 'appointment',
                   isRead: false,
                   createdAt: new Date().toISOString(),
-                  data: {
-                    action_url: `/appointments/${latestUpdated._id}`,
-                    action_label: 'Details'
-                  },
-                  user_id: latestUpdated.user_id?._id || '',
-                  doctor_id: latestUpdated.doctor_id || '',
-                };
-                
-                setToastNotification(notification);
-                setShowToast(true);
-                setTimeout(() => setShowToast(false), 5000);
+                  data: { action_url: `/appointments/${updated._id}`, action_label: 'Details' },
+                  user_id: updated.user_id?._id || '',
+                  doctor_id: updated.doctor_id || '',
+                });
               }
-            }
+            });
           }
 
-          // Update related stats only when appointments actually change
           const completedToday = newAppointments.filter(a => a.status === 'completed').length;
-          
-          // OPTIMIZATION: Only update quickStats if values differ
           setQuickStats(prevStats => {
-            if (prevStats.todayAppointments === newAppointments.length && prevStats.completedToday === completedToday) {
-              return prevStats;
-            }
-            return {
-              ...prevStats,
-              todayAppointments: newAppointments.length,
-              completedToday: completedToday
-            };
+            if (prevStats.todayAppointments === newAppointments.length && prevStats.completedToday === completedToday) return prevStats;
+            return { ...prevStats, todayAppointments: newAppointments.length, completedToday };
           });
-
-          // OPTIMIZATION: Only update timestamps if data actually changed
           setLastAppointmentsUpdate(new Date());
           setLastUpdate(new Date());
-          
           return newAppointments;
         });
       }
@@ -494,93 +580,117 @@ const Dashboard: React.FC = () => {
     } finally {
       if (!isBackground) setRefreshingAppointments(false);
     }
-  }, [doctorId]);
+  }, [doctorId, pushToast]);
 
   // ============= FETCH NOTIFICATIONS =============
-  // OPTIMIZATION: Added `isBackground` param
   const fetchNotifications = useCallback(async (showToastOnNew = false, isBackground = false) => {
     try {
-      if (!isBackground) setRefreshingNotifications(true);
       const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
-      if (!token || !doctorId) {
-        if (!isBackground) setRefreshingNotifications(false);
-        return;
-      }
+      if (!token || !doctorId) return;
 
       const timestamp = new Date().getTime();
-      const notifRes = await fetch(`${API_BASE_URL}/notifications?page=1&limit=20&_t=${timestamp}`, {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Cache-Control': 'no-cache'
+      const response = await fetch(
+        `${API_BASE_URL}/notifications?doctorId=${doctorId}&_t=${timestamp}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          }
         }
-      });
-      
-      if (!notifRes.ok) {
-        if (!isBackground) setRefreshingNotifications(false);
+      );
+
+      if (!response.ok) {
+        console.error('❌ Notification fetch failed:', response.status, await response.text());
         return;
       }
-      
-      const notifData = await notifRes.json();
-      
-      if (notifData.success && notifData.data) {
-        const processedNotifications = notifData.data.map((n: any) => ({
-          ...n,
-          _id: n._id || n.id,
-          isRead: n.isRead !== undefined ? n.isRead : (n.read === true),
-          title: n.title || 'Notification',
-          message: n.message || '',
-          type: n.type || 'system',
-          createdAt: n.createdAt || n.created_at || new Date().toISOString(),
-          data: n.data || {}
-        }));
 
-        setNotifications(prev => {
-          // OPTIMIZATION: Check for equality before update
-          const hasChanges = !areNotificationsEqual(prev, processedNotifications);
-          
-          if (!hasChanges) return prev; // No re-render
-
-          if (showToastOnNew && prev.length > 0) {
-            const newNotifications = processedNotifications.filter((newNotif: any) => 
-              !prev.some(oldNotif => oldNotif._id === newNotif._id) && !newNotif.isRead
-            );
-            
-            if (newNotifications.length > 0) {
-              const latestNotification = newNotifications[0];
-              setToastNotification(latestNotification);
-              setShowToast(true);
-              setTimeout(() => setShowToast(false), 6000);
-            }
-          }
-          
-          // Only update unread count if notifications changed
-          const newUnreadCount = processedNotifications.filter((n: any) => !n.isRead).length;
-          setUnreadCount(newUnreadCount);
-          setLastUpdate(new Date());
-
-          return processedNotifications;
-        });
+      const data = await response.json();
+      if (!data.success || !data.data) {
+        console.warn('⚠️ No notification data returned from server');
+        return;
       }
-    } catch (error) {
-      console.error("❌ Error fetching notifications:", error);
-    } finally {
-      if (!isBackground) setRefreshingNotifications(false);
-    }
-  }, [doctorId]);
 
-  // ============= SETUP APPOINTMENTS POLLING =============
+      const fetchedNotifications: NotificationType[] = data.data.map((n: any) => ({
+        _id: n._id,
+        title: n.title || 'Notification',
+        message: n.message || '',
+        type: n.type || 'system',
+        isRead: n.read ?? n.isRead ?? false,                           // ✅ DB field 'read'
+        createdAt: n.created_at ?? n.createdAt ?? new Date().toISOString(), // ✅ snake_case
+        data: n.data ?? n.metadata ?? {}                               // ✅ fallback metadata
+      }));
+
+      // ============= DETECT NEW NOTIFICATIONS → SHOW TOAST =============
+      if (!isFirstLoad.current) {
+        // Chỉ show toast cho notifications CHƯA từng thấy + chưa đọc
+        const brandNew = fetchedNotifications.filter(
+          n => !seenNotificationIds.current.has(n._id) && !n.isRead
+        );
+
+        if (brandNew.length === 1) {
+          // 1 notification mới → show toast đầy đủ
+          pushToast(brandNew[0]);
+        } else if (brandNew.length > 1) {
+          // Nhiều notification mới → show toast tóm tắt + toast cho cái đầu tiên
+          pushToast(brandNew[0]);
+          if (brandNew.length > 1) {
+            pushToast({
+              _id: `batch-${Date.now()}`,
+              title: `${brandNew.length - 1} more new alerts`,
+              message: `You have ${brandNew.length} new unread notifications.`,
+              type: 'reminder',
+              isRead: false,
+              createdAt: new Date().toISOString(),
+              data: { action_url: '/notifications', action_label: 'View All' },
+              user_id: '',
+              doctor_id: '',
+            });
+          }
+        }
+      } else {
+        // Lần load đầu: đánh dấu tất cả IDs là đã thấy, không show toast
+        isFirstLoad.current = false;
+      }
+
+      // Cập nhật seenIds
+      fetchedNotifications.forEach(n => seenNotificationIds.current.add(n._id));
+
+      // Merge với local isRead state để polling không reset trạng thái đã đọc
+      setNotifications(prev => {
+        const prevMap = new Map(prev.map(n => [n._id, n]));
+        const merged = fetchedNotifications.map(newNotif => {
+          const existing = prevMap.get(newNotif._id);
+          return existing
+            ? { ...newNotif, isRead: existing.isRead || newNotif.isRead }
+            : newNotif;
+        });
+        if (areNotificationsEqual(prev, merged)) return prev;
+        return merged;
+      });
+
+      // Cập nhật unreadCount sau khi state merge
+      setNotifications(current => {
+        setUnreadCount(current.filter(n => !n.isRead).length);
+        return current;
+      });
+
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('❌ Error in fetchNotifications:', error);
+    }
+  }, [doctorId, pushToast]);
+
+  // ============= APPOINTMENTS POLLING =============
   useEffect(() => {
     if (!doctorId || !pollingActive) return;
-    
-    // OPTIMIZATION: Check visibility state to pause polling when tab inactive
     const appointmentsInterval = setInterval(() => {
       if (document.hidden) return;
-      fetchAppointments(true, true); // Pass true for isBackground
+      fetchAppointments(true, true);
     }, 10000);
-    
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        fetchAppointments(true, false); // Manual refresh on tab focus
+        fetchAppointments(true, false);
         fetchNotifications(true, false);
       }
     };
@@ -594,19 +704,11 @@ const Dashboard: React.FC = () => {
   // ============= FETCH INITIAL DATA =============
   useEffect(() => {
     if (!doctorId) return;
-    
     const fetchInitialData = async () => {
-      // Don't run background refresh logic if tab is hidden
       if (document.hidden) return;
-
       try {
-        // Only set global loading on first mount (profile check)
         if (!profile) setLoading(true);
-        
-        const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
-        
         try {
-          // Profile rarely changes, shallow check inside if needed, but usually once is enough or on manual refresh
           if (!profile) {
             const profileRes = await fetch(`${API_BASE_URL}/doctors/profile/${doctorId}`);
             if (profileRes.ok) {
@@ -615,37 +717,29 @@ const Dashboard: React.FC = () => {
             }
           }
         } catch (e) {}
-
         try {
           const statsRes = await fetch(`${API_BASE_URL}/doctors/stats/${doctorId}`);
           if (statsRes.ok) {
             const statsData = await statsRes.json();
             if (statsData.success) {
-               // OPTIMIZATION: Simple length/id check for stats
-               setStats(prev => {
-                 if (JSON.stringify(prev) === JSON.stringify(statsData.data || [])) return prev;
-                 return statsData.data || [];
-               });
+              setStats(prev => {
+                if (JSON.stringify(prev) === JSON.stringify(statsData.data || [])) return prev;
+                return statsData.data || [];
+              });
             }
           }
         } catch (e) {}
-
-        await fetchAppointments(false, !loading); // Background if not initial load
-
+        await fetchAppointments(false, !loading);
         try {
           const consultRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/consultations/active`);
           if (consultRes.ok) {
             const consultData = await consultRes.json();
             if (consultData.success) {
               const activeConsults = consultData.data || [];
-              
-              // OPTIMIZATION: Check equality
               setConsultations(prev => {
-                if (prev.length === activeConsults.length && 
-                    prev.every((c, i) => c._id === activeConsults[i]._id)) return prev;
+                if (prev.length === activeConsults.length && prev.every((c, i) => c._id === activeConsults[i]._id)) return prev;
                 return activeConsults;
               });
-
               setQuickStats(prev => {
                 if (prev.activeConsultations === activeConsults.length) return prev;
                 return { ...prev, activeConsultations: activeConsults.length };
@@ -653,7 +747,6 @@ const Dashboard: React.FC = () => {
             }
           }
         } catch (e) {}
-
         try {
           const patientsRes = await fetch(`${API_BASE_URL}/doctors/${doctorId}/patients?limit=6`);
           if (patientsRes.ok) {
@@ -661,11 +754,9 @@ const Dashboard: React.FC = () => {
             if (patientsData.success) {
               const newPatients = patientsData.data || [];
               setRecentPatients(prev => {
-                 if (prev.length === newPatients.length && 
-                     prev.every((p, i) => p._id === newPatients[i]._id)) return prev;
-                 return newPatients;
+                if (prev.length === newPatients.length && prev.every((p, i) => p._id === newPatients[i]._id)) return prev;
+                return newPatients;
               });
-              
               setQuickStats(prev => {
                 const count = patientsData.data?.length || 0;
                 if (prev.totalPatients === count) return prev;
@@ -674,58 +765,70 @@ const Dashboard: React.FC = () => {
             }
           }
         } catch (e) {}
-
         await fetchNotifications(false, !loading);
       } catch (error) {
-        console.error("Dashboard fetch error:", error);
+        console.error('Dashboard fetch error:', error);
       } finally {
         setLoading(false);
       }
     };
-
     fetchInitialData();
     const dashboardInterval = setInterval(fetchInitialData, 120000);
     return () => clearInterval(dashboardInterval);
   }, [doctorId, fetchAppointments, fetchNotifications, profile, loading]);
 
-  // ============= SETUP NOTIFICATIONS POLLING =============
+  // ============= NOTIFICATIONS POLLING =============
   useEffect(() => {
     if (!doctorId) return;
     const notificationsInterval = setInterval(() => {
-      if (document.hidden) return; // OPTIMIZATION: Pause polling
-      fetchNotifications(true, true); // Background fetch
+      if (document.hidden) return;
+      fetchNotifications(true, true);
     }, 15000);
     return () => clearInterval(notificationsInterval);
   }, [doctorId, fetchNotifications]);
 
   // ============= HANDLERS =============
   const handleMarkAllRead = async () => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    setUnreadCount(0);
     try {
       const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
-      if (!token) return;
+      if (!token) { console.error('❌ No auth token found'); return; }
       const res = await fetch(`${API_BASE_URL}/notifications/read-all`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
-      if (res.ok) {
-        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-        setUnreadCount(0);
+      if (!res.ok) {
+        console.error('❌ Mark all read failed:', res.status, await res.json().catch(() => ({})));
+        fetchNotifications(false, true);
+      } else {
+        console.log('✅ All notifications marked as read on server');
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('❌ Mark all read error:', err);
+      fetchNotifications(false, true);
+    }
   };
 
   const handleNotificationClick = async (notif: NotificationType) => {
     if (!notif.isRead) {
+      setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+      setUnreadCount(prev => Math.max(0, prev - 1));
       try {
         const token = localStorage.getItem('token') || localStorage.getItem('accessToken');
         if (!token) return;
-        await fetch(`${API_BASE_URL}/notifications/${notif._id}/read`, {
+        const res = await fetch(`${API_BASE_URL}/notifications/${notif._id}/read`, {
           method: 'PUT',
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
-        setUnreadCount(prev => Math.max(0, prev - 1));
-      } catch (err) {}
+        if (!res.ok) {
+          console.error('❌ Mark read failed:', res.status);
+          setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: false } : n));
+          setUnreadCount(prev => prev + 1);
+        }
+      } catch (err) {
+        console.error('❌ Mark read error:', err);
+      }
     }
     if (notif.data?.action_url) {
       navigate(notif.data.action_url);
@@ -734,10 +837,9 @@ const Dashboard: React.FC = () => {
   };
 
   const handleManualRefresh = () => {
-    setLoading(true); // Explicit loading for manual refresh
+    setLoading(true);
     fetchAppointments(true, false);
     fetchNotifications(true, false);
-    // Timeout fallback to turn off loading if requests fail silently
     setTimeout(() => setLoading(false), 1000);
   };
 
@@ -751,25 +853,15 @@ const Dashboard: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [notifOpen]);
 
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'appointment': return 'event';
-      case 'consultation': return 'medical_services';
-      case 'message': return 'chat';
-      case 'alert': return 'warning';
-      case 'success': return 'check_circle';
-      case 'emergency': return 'emergency';
-      case 'reminder': return 'notifications_active';
-      default: return 'notifications';
-    }
-  };
-
   const getNotificationColor = (type: string) => {
     switch (type) {
       case 'appointment': return 'text-blue-600 bg-blue-50 dark:bg-blue-900/20';
+      case 'alert': return 'text-rose-600 bg-rose-50 dark:bg-rose-900/20';
+      case 'message': return 'text-purple-600 bg-purple-50 dark:bg-purple-900/20';
       case 'consultation': return 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20';
-      case 'emergency': return 'text-rose-600 bg-rose-50 dark:bg-rose-900/20';
+      case 'emergency': return 'text-red-600 bg-red-50 dark:bg-red-900/20';
       case 'success': return 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20';
+      case 'approval_request': return 'text-amber-600 bg-amber-50 dark:bg-amber-900/20';
       default: return 'text-slate-500 bg-slate-100 dark:bg-slate-800';
     }
   };
@@ -795,11 +887,12 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 selection:bg-blue-100 selection:text-blue-900">
-      {showToast && toastNotification && (
-        <ToastNotification notification={toastNotification} onClose={() => setShowToast(false)} navigate={navigate} />
-      )}
-      
+
+      {/* ============= TOAST STACK (bottom-right, stacked) ============= */}
+      <ToastStack toasts={toasts} onClose={dismissToast} navigate={navigate} />
+
       <div className="max-w-[1400px] mx-auto p-4 md:p-8 lg:p-10">
+
         {/* ============= TOP HEADER ============= */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-10">
           <div className="flex items-center gap-6">
@@ -828,9 +921,9 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={handleManualRefresh}
               className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:bg-slate-50 transition-all text-slate-600 dark:text-slate-400 group"
               title="Refresh Data"
@@ -839,6 +932,8 @@ const Dashboard: React.FC = () => {
                 refresh
               </span>
             </button>
+
+            {/* Notification Bell */}
             <div className="relative" ref={notifRef}>
               <button
                 className={`relative p-3 rounded-2xl bg-white dark:bg-slate-900 border shadow-sm hover:shadow-md transition-all group ${notifOpen ? 'border-blue-600 ring-2 ring-blue-50' : 'border-slate-200 dark:border-slate-800'}`}
@@ -853,7 +948,8 @@ const Dashboard: React.FC = () => {
                   </span>
                 )}
               </button>
-              
+
+              {/* Notification Dropdown */}
               {notifOpen && (
                 <div className="absolute right-0 mt-4 w-[400px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 duration-200">
                   <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
@@ -870,7 +966,7 @@ const Dashboard: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  
+
                   <div className="max-h-[450px] overflow-y-auto divide-y divide-slate-50 dark:divide-slate-800">
                     {notifications.length === 0 ? (
                       <div className="p-10 text-center">
@@ -896,7 +992,9 @@ const Dashboard: React.FC = () => {
                                 <h4 className={`text-sm font-bold truncate ${notif.isRead ? 'text-slate-600' : 'text-slate-900 dark:text-white'}`}>
                                   {notif.title}
                                 </h4>
-                                {!notif.isRead && <span className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0 mt-1.5"></span>}
+                                {!notif.isRead && (
+                                  <span className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0 mt-1.5 animate-pulse"></span>
+                                )}
                               </div>
                               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-3">{notif.message}</p>
                               <div className="flex items-center justify-between">
@@ -916,9 +1014,13 @@ const Dashboard: React.FC = () => {
                       ))
                     )}
                   </div>
-                  
+
                   <div className="p-4 bg-slate-50/50 dark:bg-slate-800/50 text-center border-t border-slate-100 dark:border-slate-800">
-                    <Link to="/notifications" className="text-xs font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors" onClick={() => setNotifOpen(false)}>
+                    <Link
+                      to="/notifications"
+                      className="text-xs font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors"
+                      onClick={() => setNotifOpen(false)}
+                    >
                       View Archive
                     </Link>
                   </div>
@@ -930,41 +1032,14 @@ const Dashboard: React.FC = () => {
 
         {/* ============= METRICS ============= */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          <StatCard
-            icon="calendar_today"
-            label="Daily Appointments"
-            value={quickStats.todayAppointments}
-            change={5}
-            color="from-blue-500 to-blue-700"
-            isLoading={loading}
-          />
-          <StatCard
-            icon="medical_services"
-            label="In-Patient Care"
-            value={quickStats.activeConsultations}
-            color="from-purple-500 to-purple-700"
-            isLoading={loading}
-          />
-          <StatCard
-            icon="verified_user"
-            label="Reports Completed"
-            value={quickStats.completedToday}
-            change={12}
-            color="from-green-500 to-green-700"
-            isLoading={loading}
-          />
-          <StatCard
-            icon="groups"
-            label="Total Case Files"
-            value={quickStats.totalPatients}
-            color="from-orange-500 to-orange-700"
-            isLoading={loading}
-          />
+          <StatCard icon="calendar_today" label="Daily Appointments" value={quickStats.todayAppointments} change={5} color="from-blue-500 to-blue-700" isLoading={loading} />
+          <StatCard icon="medical_services" label="In-Patient Care" value={quickStats.activeConsultations} color="from-purple-500 to-purple-700" isLoading={loading} />
+          <StatCard icon="verified_user" label="Reports Completed" value={quickStats.completedToday} change={12} color="from-green-500 to-green-700" isLoading={loading} />
+          <StatCard icon="groups" label="Total Case Files" value={quickStats.totalPatients} color="from-orange-500 to-orange-700" isLoading={loading} />
         </div>
 
         {/* ============= DASHBOARD GRID ============= */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-          {/* Schedule Section */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white dark:bg-slate-900/50 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-full min-h-[600px]">
               <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -978,11 +1053,9 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
                 <Link to="/appointments" className="p-2 px-4 rounded-xl text-blue-600 font-black text-xs uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2">
-                  Expand
-                  <span className="material-symbols-outlined text-sm">open_in_full</span>
+                  Expand <span className="material-symbols-outlined text-sm">open_in_full</span>
                 </Link>
               </div>
-              
               <div className="p-6 flex-1 overflow-y-auto">
                 {appointments.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
@@ -1000,7 +1073,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Consultation Tracker Section */}
           <div className="space-y-6">
             <div className="bg-white dark:bg-slate-900/50 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-full min-h-[600px]">
               <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -1017,7 +1089,6 @@ const Dashboard: React.FC = () => {
                   <span className="material-symbols-outlined text-2xl">more_vert</span>
                 </Link>
               </div>
-              
               <div className="p-6 flex-1 overflow-y-auto space-y-4">
                 {consultations.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
@@ -1046,20 +1117,13 @@ const Dashboard: React.FC = () => {
                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Case Load Statistical Analysis</p>
               </div>
             </div>
-            
             <div className="space-y-6">
               {stats.map((stat) => (
                 <div key={stat._id} className="group">
                   <div className="flex items-center justify-between mb-2.5">
                     <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full border-2 border-white dark:border-slate-800 shadow-sm ${
-                        stat._id === 'confirmed' ? 'bg-emerald-500' :
-                        stat._id === 'pending' ? 'bg-amber-500' :
-                        stat._id === 'cancelled' ? 'bg-rose-500' : 'bg-blue-500'
-                      }`}></div>
-                      <span className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-widest">
-                        {stat._id}
-                      </span>
+                      <div className={`w-3 h-3 rounded-full border-2 border-white dark:border-slate-800 shadow-sm ${stat._id === 'confirmed' ? 'bg-emerald-500' : stat._id === 'pending' ? 'bg-amber-500' : stat._id === 'cancelled' ? 'bg-rose-500' : 'bg-blue-500'}`}></div>
+                      <span className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-widest">{stat._id}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-lg font-black text-slate-900 dark:text-white">{stat.count || 0}</span>
@@ -1068,18 +1132,13 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="w-full h-2.5 bg-slate-50 dark:bg-slate-800 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-1000 ease-out shadow-[0_0_8px_rgba(59,130,246,0.3)] ${
-                        stat._id === 'confirmed' ? 'bg-emerald-500 shadow-emerald-500/20' :
-                        stat._id === 'pending' ? 'bg-amber-500 shadow-amber-500/20' :
-                        stat._id === 'cancelled' ? 'bg-rose-500 shadow-rose-500/20' : 'bg-blue-600 shadow-blue-500/20'
-                      }`}
+                      className={`h-full rounded-full transition-all duration-1000 ease-out ${stat._id === 'confirmed' ? 'bg-emerald-500' : stat._id === 'pending' ? 'bg-amber-500' : stat._id === 'cancelled' ? 'bg-rose-500' : 'bg-blue-600'}`}
                       style={{ width: `${totalAppointments > 0 ? ((stat.count || 0) / totalAppointments) * 100 : 0}%` }}
                     ></div>
                   </div>
                 </div>
               ))}
             </div>
-            
             <div className="mt-10 pt-6 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Aggregate Throughput</span>
               <span className="text-2xl font-black text-blue-600">{totalAppointments} <span className="text-xs font-bold text-slate-300 uppercase">Records</span></span>
@@ -1098,11 +1157,10 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
             </div>
-            
             <div className="space-y-3">
               {recentPatients.slice(0, 6).map((patient) => (
-                <div 
-                  key={patient._id} 
+                <div
+                  key={patient._id}
                   className="flex items-center gap-4 p-3.5 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer border border-transparent hover:border-slate-100 dark:hover:border-slate-700"
                   onClick={() => navigate(`/patients/${patient._id}`)}
                 >
@@ -1117,8 +1175,10 @@ const Dashboard: React.FC = () => {
                 </div>
               ))}
             </div>
-            
-            <Link to="/patients" className="mt-8 flex items-center justify-center gap-2 w-full py-4 rounded-2xl border-2 border-slate-100 dark:border-slate-800 text-xs font-black text-slate-500 uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-blue-600 transition-all">
+            <Link
+              to="/patients"
+              className="mt-8 flex items-center justify-center gap-2 w-full py-4 rounded-2xl border-2 border-slate-100 dark:border-slate-800 text-xs font-black text-slate-500 uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-blue-600 transition-all"
+            >
               Comprehensive Directory
               <span className="material-symbols-outlined text-sm">arrow_forward_ios</span>
             </Link>
