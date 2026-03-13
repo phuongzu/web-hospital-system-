@@ -1,15 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import io, { Socket } from 'socket.io-client';
+import io from 'socket.io-client';
 import EmojiPicker, { EmojiClickData } from 'emoji-picker-react';
-import { API_BASE_URL, SOCKET_URL, getAuthToken, getDoctorId, getAvatarUrl, redirectToLoginPage } from '../utils/api';
+import {
+  API_BASE_URL,
+  SOCKET_URL,
+  getAuthToken,
+  getDoctorId,
+  getAvatarUrl,
+  redirectToLoginPage,
+} from '../utils/api';
 
-// --- Type Definitions ---
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 interface User {
   _id: string;
   name: string;
   avatar?: string;
   role?: string;
+  phoneNumber?: string;
 }
 
 interface Reaction {
@@ -34,8 +42,8 @@ interface Message {
   deleted?: boolean;
   reactions?: Reaction[];
   reactions_count?: number;
-  _temp?: boolean; // Đánh dấu tin nhắn tạm thời
-  _failed?: boolean; // Đánh dấu tin nhắn gửi thất bại
+  _temp?: boolean;
+  _failed?: boolean;
 }
 
 interface Conversation {
@@ -47,283 +55,349 @@ interface Conversation {
   medical_record_id?: string;
 }
 
-// --- Constants ---
-const MESSAGE_TIMEOUT = 3000; // 3 seconds
-const MAX_RETRY_COUNT = 2;
-const TYPING_TIMEOUT = 2000; // 2 seconds
+// ─── Constants ─────────────────────────────────────────────────────────────────
 
-// --- Helper Components ---
+const MESSAGE_TIMEOUT  = 3000;
+const MAX_RETRY_COUNT  = 2;
+const TYPING_TIMEOUT   = 2000;
 
-const ActionButton = ({ icon, onClick, color = "text-slate-400", hoverColor = "hover:text-blue-600" }: any) => (
-  <button 
-    onClick={(e) => { e.stopPropagation(); onClick(); }} 
-    className={`p-1.5 rounded-full hover:bg-slate-100 transition-colors ${color} ${hoverColor}`}
+// Phone: starts with 0 or +84, at least 9 digits
+const PHONE_REGEX = /^(\+84|0)[0-9]{8,10}$/;
+
+const isPhoneLike = (input: string) => {
+  const stripped = input.trim().replace(/[\s\-\.]/g, '');
+  return /^(\+84|0)[0-9]{7,}$/.test(stripped) || /^[0-9]{9,11}$/.test(stripped);
+};
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+const getSenderId = (sender: any): string => {
+  if (!sender) return '';
+  return typeof sender === 'object' ? sender._id : sender;
+};
+
+const getMediaUrl = (url?: string) => {
+  if (!url) return '';
+  if (url.startsWith('blob:') || url.startsWith('http')) return url;
+  return `${API_BASE_URL}${url}`;
+};
+
+// ─── Action button ─────────────────────────────────────────────────────────────
+
+const ActionButton = ({
+  icon,
+  onClick,
+  color = 'text-slate-400',
+  hoverColor = 'hover:text-primary',
+}: any) => (
+  <button
+    onClick={(e) => { e.stopPropagation(); onClick(); }}
+    className={`p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-[#1a2c2f] transition-colors ${color} ${hoverColor}`}
   >
-    <span className="material-symbols-outlined text-[18px] md:text-[20px]">{icon}</span>
+    <span className="material-symbols-outlined text-[18px]">{icon}</span>
   </button>
 );
 
-const Messages: React.FC = () => {
-  // --- State ---
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [messagesLoading, setMessagesLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [isSocketConnected, setIsSocketConnected] = useState(false);
-  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
-  const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
-  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
-  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
-  const [editInput, setEditInput] = useState('');
-  const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState<Map<string, number>>(new Map());
+// ─── Patient Avatar ────────────────────────────────────────────────────────────
 
-  // --- Refs ---
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<any>(null);
-  const selectedConvRef = useRef<Conversation | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const emojiRef = useRef<HTMLDivElement>(null);
-  const reactionPickerRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const messageQueueRef = useRef<Map<string, { message: Message; data: any; retries: number }>>(new Map());
-  const pendingMessagesRef = useRef<Set<string>>(new Set());
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
+const getAvatarColor = (name: string) => {
+  const palette = [
+    'from-sky-100 to-sky-200 text-sky-700',
+    'from-violet-100 to-violet-200 text-violet-700',
+    'from-emerald-100 to-emerald-200 text-emerald-700',
+    'from-amber-100 to-amber-200 text-amber-700',
+    'from-rose-100 to-rose-200 text-rose-700',
+    'from-indigo-100 to-indigo-200 text-indigo-700',
+  ];
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return palette[Math.abs(hash) % palette.length];
+};
+
+const Avatar: React.FC<{ user?: User | null; size?: 'sm' | 'md' | 'lg' }> = ({
+  user, size = 'md',
+}) => {
+  const dim  = size === 'lg' ? 'size-14' : size === 'md' ? 'size-12' : 'size-9';
+  const text = size === 'lg' ? 'text-lg' : size === 'md' ? 'text-sm' : 'text-xs';
+  const url  = getAvatarUrl(user?.avatar);
+  const hasAvatar = user?.avatar && user.avatar !== 'undefined' && user.avatar !== 'null';
+
+  return (
+    <div className={`${dim} rounded-2xl overflow-hidden shrink-0`}>
+      {hasAvatar ? (
+        <img src={url} alt={user?.name} className="size-full object-cover" />
+      ) : (
+        <div className={`size-full flex items-center justify-center bg-gradient-to-br ${getAvatarColor(user?.name || '')}`}>
+          <span className={`${text} font-bold`}>
+            {(user?.name || '?').charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Main Component ────────────────────────────────────────────────────────────
+
+const Messages: React.FC = () => {
   const doctorId = getDoctorId();
 
-  // --- Effects ---
+  // ── Core state ───────────────────────────────────────────────────────────────
+  const [conversations, setConversations]     = useState<Conversation[]>([]);
+  const [selectedConv, setSelectedConv]       = useState<Conversation | null>(null);
+  const [messages, setMessages]               = useState<Message[]>([]);
+  const [input, setInput]                     = useState('');
+  const [loading, setLoading]                 = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [sending, setSending]                 = useState(false);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
+  const [typingUsers, setTypingUsers]         = useState<Set<string>>(new Set());
 
-  // Update ref when selected conversation changes
-  useEffect(() => {
-    selectedConvRef.current = selectedConv;
-  }, [selectedConv]);
+  // ── UI state ─────────────────────────────────────────────────────────────────
+  const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
+  const [hoveredMessageId, setHoveredMessageId]         = useState<string | null>(null);
+  const [editingMessage, setEditingMessage]             = useState<Message | null>(null);
+  const [editInput, setEditInput]                       = useState('');
+  const [reactingToMessageId, setReactingToMessageId]   = useState<string | null>(null);
 
-  // Handle click outside emoji pickers
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (emojiRef.current && !emojiRef.current.contains(event.target as Node)) {
-        setShowInputEmojiPicker(false);
-      }
-      if (reactionPickerRef.current && !reactionPickerRef.current.contains(event.target as Node)) {
-        setReactingToMessageId(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  // ── Phone search state ───────────────────────────────────────────────────────
+  const [searchQuery, setSearchQuery]         = useState('');
+  const [searchResult, setSearchResult]       = useState<User | null>(null);
+  const [searchStatus, setSearchStatus]       = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
+  const [startingConv, setStartingConv]       = useState(false);
 
-  // Cleanup on unmount
+  // ── Refs ─────────────────────────────────────────────────────────────────────
+  const messagesEndRef      = useRef<HTMLDivElement>(null);
+  const socketRef           = useRef<any>(null);
+  const selectedConvRef     = useRef<Conversation | null>(null);
+  const fileInputRef        = useRef<HTMLInputElement>(null);
+  const emojiRef            = useRef<HTMLDivElement>(null);
+  const reactionPickerRef   = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef    = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef    = useRef<NodeJS.Timeout | null>(null);
+  const scrollTimeoutRef    = useRef<NodeJS.Timeout | null>(null);
+  const messageQueueRef     = useRef<Map<string, { message: Message; data: any; retries: number }>>(new Map());
+  const pendingMessagesRef  = useRef<Set<string>>(new Set());
+
+  useEffect(() => { selectedConvRef.current = selectedConv; }, [selectedConv]);
+
+  // ─── Cleanup ────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     return () => {
-      if (socketRef.current) {
-        socketRef.current.removeAllListeners();
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current);
-      }
+      if (socketRef.current) { socketRef.current.removeAllListeners(); socketRef.current.disconnect(); }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, []);
 
-  // --- Helpers ---
+  // ─── Click outside ──────────────────────────────────────────────────────────
 
-  const safeFormatTime = useCallback((dateStr?: string | number | Date): string => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return '';
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) setShowInputEmojiPicker(false);
+      if (reactionPickerRef.current && !reactionPickerRef.current.contains(e.target as Node)) setReactingToMessageId(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const extractMessagePreview = useCallback((m: Message | undefined): string => {
-    if (!m) return '';
-    if (m.deleted) return '🚫 Message deleted';
-    if (m.message_type === 'image') return '📷 Image';
-    if (m.message_type === 'file') return '📎 Attachment';
-    
-    const raw: any = m;
-    if (typeof raw === 'string') return raw;
-    const text = raw.message || raw.content || raw.text || '';
-    return typeof text === 'string' ? text.trim() : 'Message';
-  }, []);
-
-  const getSenderId = (sender: any): string => {
-    if (!sender) return '';
-    return typeof sender === 'object' ? sender._id : sender;
-  };
-
-  const getMediaUrl = (url?: string) => {
-    if (!url) return '';
-    if (url.startsWith('blob:') || url.startsWith('http')) return url;
-    return `${API_BASE_URL}${url}`;
-  };
+  // ─── Scroll ─────────────────────────────────────────────────────────────────
 
   const debouncedScrollToBottom = useCallback(() => {
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     scrollTimeoutRef.current = setTimeout(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       scrollTimeoutRef.current = null;
     }, 100);
   }, []);
+
+  // ─── Mark read ──────────────────────────────────────────────────────────────
 
   const markAsReadAPI = useCallback(async (conversationId: string) => {
     try {
       const token = getAuthToken();
       await fetch(`${API_BASE_URL}/messages/conversations/${conversationId}/read`, {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
-    } catch (e) { 
-      // Silent fail - không ảnh hưởng UX
-    }
+    } catch (_) {}
   }, []);
 
-  // Process message queue
-  const processMessageQueue = useCallback(async () => {
-    if (messageQueueRef.current.size === 0 || !socketRef.current?.connected) return;
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-    const queueArray = Array.from(messageQueueRef.current.entries());
-    
-    for (const [tempId, { message, data, retries }] of queueArray) {
-      if (retries >= MAX_RETRY_COUNT) {
-        // Mark as failed after max retries
-        setMessages(prev => prev.map(m => 
-          m._id === tempId ? { ...m, _failed: true } : m
-        ));
-        messageQueueRef.current.delete(tempId);
-        continue;
-      }
+  const safeFormatTime = useCallback((dateStr?: string | number | Date): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }, []);
 
-      try {
-        const result = await sendViaSocket(tempId, data);
-        if (result) {
-          // Success - update message ID
-          setMessages(prev => prev.map(m => 
-            m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m
-          ));
-          messageQueueRef.current.delete(tempId);
+  const extractPreview = useCallback((m?: Message): string => {
+    if (!m) return '';
+    if (m.deleted)               return '🚫 Message deleted';
+    if (m.message_type === 'image') return '📷 Photo';
+    if (m.message_type === 'file')  return '📎 Attachment';
+    return (m as any).message || (m as any).content || '';
+  }, []);
+
+  // ─── Phone search logic ──────────────────────────────────────────────────────
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setSearchQuery(val);
+    setSearchResult(null);
+
+    if (!val.trim()) { setSearchStatus('idle'); return; }
+
+    // Only trigger phone search if input looks like a phone number
+    if (isPhoneLike(val)) {
+      setSearchStatus('searching');
+
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = setTimeout(async () => {
+        try {
+          const token = getAuthToken();
+          const res   = await fetch(
+            `${API_BASE_URL}/messages/search-user?phone=${encodeURIComponent(val.trim())}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const data = await res.json();
+          if (data.success && data.data) {
+            setSearchResult(data.data);
+            setSearchStatus('found');
+          } else {
+            setSearchResult(null);
+            setSearchStatus('not-found');
+          }
+        } catch {
+          setSearchStatus('error');
         }
-      } catch (error) {
-        // Increment retry count and leave in queue
-        messageQueueRef.current.set(tempId, { 
-          message, 
-          data, 
-          retries: retries + 1 
-        });
-      }
+      }, 600); // debounce 600ms
+    } else {
+      setSearchStatus('idle');
     }
-  }, []);
+  };
 
-  // --- Socket Handlers ---
-
-  const handleTyping = useCallback((data: any) => {
-    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
-    
-    const { userId, isTyping } = data;
-    
-    setTypingUsers(prev => {
-      const newSet = new Set(prev);
-      if (isTyping) {
-        newSet.add(userId);
-      } else {
-        newSet.delete(userId);
+  const handleStartConversation = async (user: User) => {
+    if (startingConv) return;
+    setStartingConv(true);
+    try {
+      const token = getAuthToken();
+      const res   = await fetch(`${API_BASE_URL}/messages/conversations/find-or-create`, {
+        method:  'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ participantId: user._id }),
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        const newConv: Conversation = data.data;
+        // Add to list if not already there
+        setConversations(prev => {
+          const exists = prev.find(c => c._id === newConv._id);
+          if (exists) return prev;
+          return [newConv, ...prev];
+        });
+        setSelectedConv(newConv);
+        // Clear search
+        setSearchQuery('');
+        setSearchResult(null);
+        setSearchStatus('idle');
       }
-      return newSet;
+    } catch (e) {
+      console.error('Start conversation failed:', e);
+    } finally {
+      setStartingConv(false);
+    }
+  };
+
+  // ─── Socket handlers ─────────────────────────────────────────────────────────
+
+  const handleTypingSocket = useCallback((data: any) => {
+    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
+    setTypingUsers(prev => {
+      const s = new Set(prev);
+      data.isTyping ? s.add(data.userId) : s.delete(data.userId);
+      return s;
     });
   }, []);
 
   const handleMessagesRead = useCallback((data: any) => {
     if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
-    setMessages(prev => prev.map(msg => 
-      getSenderId(msg.sender_id) !== doctorId ? { ...msg, read: true } : msg
+    setMessages(prev => prev.map(m =>
+      getSenderId(m.sender_id) !== doctorId ? { ...m, read: true } : m
     ));
   }, [doctorId]);
 
   const handleNewMessage = useCallback((rawMsg: any) => {
     if (!rawMsg) return;
-
     const convId = rawMsg.conversationId || rawMsg.conversation_id;
-    
-    // Skip if this is a pending message we already handled
     if (pendingMessagesRef.current.has(rawMsg._id)) {
       pendingMessagesRef.current.delete(rawMsg._id);
       return;
     }
-
-    // Normalize incoming message
-    const normalizedMsg: Message = {
+    const msg: Message = {
       ...rawMsg,
       _id: rawMsg._id || `msg_${Date.now()}`,
       conversation_id: convId,
       message: rawMsg.message || '',
-      message_type: (rawMsg.message_type as Message['message_type']) || 'text',
-      media_url: rawMsg.media_url,
+      message_type: rawMsg.message_type || 'text',
       timestamp: rawMsg.timestamp || new Date().toISOString(),
-      reactions: rawMsg.reactions || []
+      reactions: rawMsg.reactions || [],
     };
-
-    const activeConv = selectedConvRef.current;
-
-    // Update conversation list
-    setConversations(prev => {
-      const exists = prev.find(c => c._id === convId);
-      if (exists) {
-        return prev.map(c => c._id === convId ? {
-          ...c,
-          last_message: normalizedMsg,
-          last_message_at: normalizedMsg.timestamp,
-          unread_count: (activeConv?._id === convId) ? 0 : (c.unread_count || 0) + 1
-        } : c).sort((a, b) => 
-          new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
-        );
-      }
-      return prev;
-    });
-
-    // If viewing this conversation, add message
-    if (activeConv?._id === convId) {
+    const active = selectedConvRef.current;
+    setConversations(prev =>
+      prev.map(c => c._id === convId ? {
+        ...c,
+        last_message: msg,
+        last_message_at: msg.timestamp,
+        unread_count: active?._id === convId ? 0 : (c.unread_count || 0) + 1,
+      } : c).sort((a, b) =>
+        new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
+      )
+    );
+    if (active?._id === convId) {
       setMessages(prev => {
-        if (prev.some(m => m._id === normalizedMsg._id)) return prev;
-
-        const sId = getSenderId(normalizedMsg.sender_id);
+        if (prev.some(m => m._id === msg._id)) return prev;
+        const sId = getSenderId(msg.sender_id);
         if (sId === doctorId) {
-          const tempIdx = prev.findIndex(m => 
-            m._temp && m.message === normalizedMsg.message
-          );
-          if (tempIdx !== -1) {
-            const newMsgs = [...prev];
-            newMsgs[tempIdx] = normalizedMsg;
-            return newMsgs;
-          }
+          const idx = prev.findIndex(m => m._temp && m.message === msg.message);
+          if (idx !== -1) { const n = [...prev]; n[idx] = msg; return n; }
         }
-        return [...prev, normalizedMsg];
+        return [...prev, msg];
       });
       markAsReadAPI(convId);
       debouncedScrollToBottom();
     }
   }, [doctorId, markAsReadAPI, debouncedScrollToBottom]);
 
-  // --- Socket Connection ---
+  // ─── Socket connect ──────────────────────────────────────────────────────────
+
+  const processQueue = useCallback(async () => {
+    if (!messageQueueRef.current.size || !socketRef.current?.connected) return;
+    for (const [tempId, { message, data, retries }] of Array.from(messageQueueRef.current.entries())) {
+      if (retries >= MAX_RETRY_COUNT) {
+        setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _failed: true } : m));
+        messageQueueRef.current.delete(tempId);
+        continue;
+      }
+      try {
+        const result = await sendViaSocket(tempId, data);
+        if (result) {
+          setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m));
+          messageQueueRef.current.delete(tempId);
+        }
+      } catch {
+        messageQueueRef.current.set(tempId, { message, data, retries: retries + 1 });
+      }
+    }
+  }, []);
 
   const connectSocket = useCallback(() => {
     const token = getAuthToken();
     if (!token || socketRef.current?.connected) return socketRef.current;
-
-    if (socketRef.current) {
-      socketRef.current.removeAllListeners();
-      socketRef.current.disconnect();
-    }
+    if (socketRef.current) { socketRef.current.removeAllListeners(); socketRef.current.disconnect(); }
 
     const socket = io(SOCKET_URL, {
       auth: { token },
@@ -332,116 +406,78 @@ const Messages: React.FC = () => {
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 10000
+      timeout: 10000,
     });
-    
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('✅ Socket connected');
       setIsSocketConnected(true);
-      if (selectedConvRef.current) {
-        socket.emit('join_conversation', selectedConvRef.current._id);
-      }
-      // Process queue when reconnected
-      processMessageQueue();
+      if (selectedConvRef.current) socket.emit('join_conversation', selectedConvRef.current._id);
+      processQueue();
     });
-    
-    socket.on('disconnect', () => {
-      console.log('❌ Socket disconnected');
-      setIsSocketConnected(false);
-    });
+    socket.on('disconnect', () => setIsSocketConnected(false));
+    socket.on('connect_error', () => setIsSocketConnected(false));
 
-    socket.on('connect_error', (error: any) => {
-      console.error('Socket connection error:', error);
-      setIsSocketConnected(false);
-    });
-    
-    // Main message handler
     socket.on('new_message', handleNewMessage);
-
-    // CRUD & Reaction Events
     socket.on('message_edited', (data: any) => {
-      if (selectedConvRef.current?._id === data.conversationId) {
+      if (selectedConvRef.current?._id === data.conversationId)
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, ...data.message } : m));
-      }
     });
-
     socket.on('message_deleted', (data: any) => {
-      if (selectedConvRef.current?._id === data.conversationId) {
+      if (selectedConvRef.current?._id === data.conversationId)
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] } : m));
-      }
     });
-
     socket.on('reaction_added', (data: any) => {
-        if (selectedConvRef.current?._id === data.conversationId) {
-            setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
-        }
+      if (selectedConvRef.current?._id === data.conversationId)
+        setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
     });
-
     socket.on('reaction_removed', (data: any) => {
-        if (selectedConvRef.current?._id === data.conversationId) {
-            setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
-        }
+      if (selectedConvRef.current?._id === data.conversationId)
+        setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
     });
-
-    socket.on('user_typing', handleTyping);
+    socket.on('user_typing', handleTypingSocket);
     socket.on('messages_read_by_user', handleMessagesRead);
-
-    socket.on('message_sent_success', (response: any) => {
-      if (response.messageId && response.tempId) {
-        setMessages(prev => prev.map(m => 
-          m._id === response.tempId ? { ...m, _id: response.messageId, _temp: false } : m
-        ));
-        pendingMessagesRef.current.add(response.messageId);
+    socket.on('message_sent_success', (res: any) => {
+      if (res.messageId && res.tempId) {
+        setMessages(prev => prev.map(m => m._id === res.tempId ? { ...m, _id: res.messageId, _temp: false } : m));
+        pendingMessagesRef.current.add(res.messageId);
       }
     });
-
-    socket.on('message_error', (error: any) => {
-      if (error.tempId) {
-        setMessages(prev => prev.map(m => 
-          m._id === error.tempId ? { ...m, _failed: true } : m
-        ));
-      }
+    socket.on('message_error', (err: any) => {
+      if (err.tempId) setMessages(prev => prev.map(m => m._id === err.tempId ? { ...m, _failed: true } : m));
     });
-
     return socket;
-  }, [handleTyping, handleMessagesRead, handleNewMessage, processMessageQueue]);
+  }, [handleTypingSocket, handleMessagesRead, handleNewMessage, processQueue]);
 
-  // --- API Calls (Fetch) ---
+  // ─── Fetch ───────────────────────────────────────────────────────────────────
 
   const fetchConversations = useCallback(async () => {
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/conversations`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res   = await fetch(`${API_BASE_URL}/messages/conversations`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          const mappedConversations = (data.data || []).map((c: any) => ({
-            ...c,
-            medical_record_id: c.medical_record_id
-          }));
-          setConversations(mappedConversations.sort((a: any, b: any) => 
-            new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
-          ));
-        }
+        if (data.success)
+          setConversations(
+            (data.data || []).sort((a: any, b: any) =>
+              new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
+            )
+          );
       }
-    } catch (e) { 
-      console.error('Fetch conversations error:', e);
-    } finally { 
-      setLoading(false); 
-    }
+    } catch (e) { console.error(e); }
+    finally    { setLoading(false); }
   }, []);
 
   const fetchMessages = useCallback(async (conversationId: string) => {
     setMessagesLoading(true);
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/conversations/${conversationId}/messages`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res   = await fetch(
+        `${API_BASE_URL}/messages/conversations/${conversationId}/messages`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -454,60 +490,39 @@ const Messages: React.FC = () => {
           debouncedScrollToBottom();
         }
       }
-    } catch (e) { 
-      console.error('Fetch messages error:', e);
-    } finally { 
-      setMessagesLoading(false); 
-    }
+    } catch (e) { console.error(e); }
+    finally    { setMessagesLoading(false); }
   }, [markAsReadAPI, debouncedScrollToBottom]);
 
-  // --- Initialization ---
+  // ─── Init ────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!doctorId) { 
-      redirectToLoginPage(); 
-      return; 
-    }
+    if (!doctorId) { redirectToLoginPage(); return; }
     fetchConversations();
     const socket = connectSocket();
-    
-    // Set up interval to process queue
-    const queueInterval = setInterval(processMessageQueue, 1000);
-    
+    const queueInterval = setInterval(processQueue, 1000);
     return () => {
       clearInterval(queueInterval);
-      if (socket) {
-        socket.removeAllListeners();
-        socket.disconnect();
-      }
+      socket?.removeAllListeners();
+      socket?.disconnect();
     };
-  }, [doctorId, connectSocket, fetchConversations, processMessageQueue]);
+  }, [doctorId, connectSocket, fetchConversations, processQueue]);
 
   useEffect(() => {
-    if (selectedConv) {
-      fetchMessages(selectedConv._id);
-      setTypingUsers(new Set());
-    }
+    if (selectedConv) { fetchMessages(selectedConv._id); setTypingUsers(new Set()); }
   }, [selectedConv, fetchMessages]);
 
-  useEffect(() => { 
-    if (messages.length > 0) debouncedScrollToBottom();
-  }, [messages, debouncedScrollToBottom]);
+  useEffect(() => { if (messages.length > 0) debouncedScrollToBottom(); }, [messages, debouncedScrollToBottom]);
 
-  // --- Input Handlers ---
+  // ─── Typing ──────────────────────────────────────────────────────────────────
 
   const handleTypingStart = useCallback(() => {
     if (!selectedConvRef.current || !socketRef.current?.connected) return;
     socketRef.current.emit('typing_start', { conversationId: selectedConvRef.current._id });
-    
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-    
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      if (socketRef.current?.connected && selectedConvRef.current) {
+      socketRef.current?.connected && selectedConvRef.current &&
         socketRef.current.emit('typing_stop', { conversationId: selectedConvRef.current._id });
-      }
       typingTimeoutRef.current = null;
     }, TYPING_TIMEOUT);
   }, []);
@@ -515,426 +530,272 @@ const Messages: React.FC = () => {
   const handleTypingStop = useCallback(() => {
     if (!selectedConvRef.current || !socketRef.current?.connected) return;
     socketRef.current.emit('typing_stop', { conversationId: selectedConvRef.current._id });
-    
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
+    if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
   }, []);
 
-  const handleInputEmojiClick = (emojiData: EmojiClickData) => {
-    setInput(prev => prev + emojiData.emoji);
-    handleTypingStart();
-  };
+  // ─── Send ────────────────────────────────────────────────────────────────────
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInput(e.target.value);
-    handleTypingStart();
-  };
-
-  // --- Send Logic ---
-
-  const sendViaSocket = (tempId: string, messageData: any): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    if (!socketRef.current?.connected) {
-      reject(new Error('Socket not connected'));
-      return;
-    }
-
-    socketRef.current.timeout(5000).emit(
-      'send_message',
-      { ...messageData, tempId },
-      (err: any, response: any) => {
-        if (err) {
-          reject(new Error('Socket timeout'));
-          return;
-        }
-
-        if (response?.success) {
-          resolve(response);
-        } else {
-          reject(new Error(response?.error || 'Failed'));
-        }
-      }
-    );
-  });
-};
+  const sendViaSocket = (tempId: string, data: any): Promise<any> =>
+    new Promise((resolve, reject) => {
+      if (!socketRef.current?.connected) { reject(new Error('Not connected')); return; }
+      socketRef.current.timeout(5000).emit('send_message', { ...data, tempId }, (err: any, res: any) => {
+        if (err || !res?.success) reject(new Error(err?.message || res?.error || 'Failed'));
+        else resolve(res);
+      });
+    });
 
   const handleSendText = async () => {
     if (!input.trim() || !selectedConv || sending) return;
-    
-    const messageText = input.trim();
+    const text   = input.trim();
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
     const tempMsg: Message = {
-      _id: tempId,
-      conversation_id: selectedConv._id,
+      _id: tempId, conversation_id: selectedConv._id,
       sender_id: { _id: doctorId, name: 'You', role: 'doctor' },
       receiver_id: selectedConv.participant,
-      message: messageText,
-      message_type: 'text',
-      read: false,
-      timestamp: new Date().toISOString(),
-      _temp: true
+      message: text, message_type: 'text',
+      read: false, timestamp: new Date().toISOString(), _temp: true,
     };
-    
     setMessages(prev => [...prev, tempMsg]);
     setInput('');
     setShowInputEmojiPicker(false);
     handleTypingStop();
     setSending(true);
-
-    const messageData = {
-      conversationId: selectedConv._id,
-      receiverId: selectedConv.participant._id,
-      message: messageText,
-      messageType: 'text'
-    };
-
-    // Try socket first
+    const msgData = { conversationId: selectedConv._id, receiverId: selectedConv.participant._id, message: text, messageType: 'text' };
     try {
-      const result = await sendViaSocket(tempId, messageData);
-      setMessages(prev => prev.map(m => 
-        m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m
-      ));
-    } catch (socketError) {
-      console.warn('Socket failed, adding to queue:', socketError);
-      
-      // Add to queue for retry
-      messageQueueRef.current.set(tempId, { 
-        message: tempMsg, 
-        data: messageData, 
-        retries: 0 
-      });
-      
-      // Try REST API as fallback
+      const result = await sendViaSocket(tempId, msgData);
+      setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m));
+    } catch {
+      messageQueueRef.current.set(tempId, { message: tempMsg, data: msgData, retries: 0 });
       try {
         const token = getAuthToken();
-        const res = await fetch(`${API_BASE_URL}/messages/send`, {
+        const res   = await fetch(`${API_BASE_URL}/messages/send`, {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json', 
-            'Authorization': `Bearer ${token}` 
-          },
-          body: JSON.stringify({
-            receiver_id: selectedConv.participant._id,
-            message: messageText,
-            message_type: 'text'
-          })
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ receiver_id: selectedConv.participant._id, message: text, message_type: 'text' }),
         });
-        
         if (res.ok) {
-          const result = await res.json();
-          if (result.success && result.data?.message?._id) {
-            setMessages(prev => prev.map(m => 
-              m._id === tempId ? { ...m, _id: result.data.message._id, _temp: false } : m
-            ));
-            pendingMessagesRef.current.add(result.data.message._id);
+          const d = await res.json();
+          if (d.success && d.data?.message?._id) {
+            setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: d.data.message._id, _temp: false } : m));
+            pendingMessagesRef.current.add(d.data.message._id);
             messageQueueRef.current.delete(tempId);
           }
         }
-      } catch (restError) {
-        console.error('REST API also failed:', restError);
-        // Keep in queue for retry
-      }
-    } finally {
-      setSending(false);
-    }
+      } catch (e) { console.error('REST fallback failed:', e); }
+    } finally { setSending(false); }
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConv || sending) return;
-    
-    if (file.size > 10 * 1024 * 1024) { 
-      alert("File is too large (Max 10MB)"); 
-      return; 
-    }
-
+    if (file.size > 10 * 1024 * 1024) { alert('File is too large (Max 10MB)'); return; }
     const isImage = file.type.startsWith('image/');
-    const tempId = `temp_media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const tempId  = `temp_media_${Date.now()}`;
     const blobUrl = URL.createObjectURL(file);
-    
     const tempMsg: Message = {
-      _id: tempId,
-      conversation_id: selectedConv._id,
+      _id: tempId, conversation_id: selectedConv._id,
       sender_id: { _id: doctorId, name: 'You', role: 'doctor' },
       receiver_id: selectedConv.participant,
-      message: '',
-      message_type: isImage ? 'image' : 'file',
-      media_url: blobUrl,
-      media_name: file.name,
-      read: false,
-      timestamp: new Date().toISOString(),
-      _temp: true
+      message: '', message_type: isImage ? 'image' : 'file',
+      media_url: blobUrl, media_name: file.name,
+      read: false, timestamp: new Date().toISOString(), _temp: true,
     };
-
     setMessages(prev => [...prev, tempMsg]);
     debouncedScrollToBottom();
     setSending(true);
-
     const formData = new FormData();
     formData.append('file', file);
     formData.append('receiver_id', selectedConv.participant._id);
-    if (selectedConv.medical_record_id) {
-      formData.append('medical_record_id', selectedConv.medical_record_id.toString());
-    }
-    
+    if (selectedConv.medical_record_id) formData.append('medical_record_id', selectedConv.medical_record_id.toString());
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/send-with-media`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
+      const res   = await fetch(`${API_BASE_URL}/messages/send-with-media`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData,
       });
-
       if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.data?._id) {
-          setMessages(prev => prev.map(m => 
-            m._id === tempId ? { ...m, _id: data.data._id, media_url: data.data.media_url, _temp: false } : m
-          ));
-          pendingMessagesRef.current.add(data.data._id);
+        const d = await res.json();
+        if (d.success && d.data?._id) {
+          setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: d.data._id, media_url: d.data.media_url, _temp: false } : m));
+          pendingMessagesRef.current.add(d.data._id);
         }
       }
-    } catch (err) {
-      console.error('File upload error:', err);
-      setMessages(prev => prev.map(m => 
-        m._id === tempId ? { ...m, _failed: true } : m
-      ));
-      alert("Failed to send file");
-    } finally {
-      setSending(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      URL.revokeObjectURL(blobUrl);
-    }
+    } catch { setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _failed: true } : m)); }
+    finally { setSending(false); if (fileInputRef.current) fileInputRef.current.value = ''; URL.revokeObjectURL(blobUrl); }
   };
 
-  // --- CRUD Handlers ---
+  // ─── Message actions ─────────────────────────────────────────────────────────
 
   const handleDeleteMessage = async (messageId: string, type: 'me' | 'everyone') => {
-    const ok = window.confirm(
-      type === 'everyone'
-        ? 'Delete for everyone?'
-        : 'Delete for me?'
-    );
-
-    if (!ok) return;
-    
+    if (!window.confirm(type === 'everyone' ? 'Delete for everyone?' : 'Delete for me?')) return;
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
+      const res   = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
         method: 'DELETE',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ type })
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
       });
-
       if (res.ok) {
-        if (type === 'everyone') {
-          setMessages(prev => prev.map(m => 
-            m._id === messageId ? { ...m, deleted: true, message: 'This message was deleted' } : m
-          ));
-        } else {
-          setMessages(prev => prev.filter(m => m._id !== messageId));
-        }
+        type === 'everyone'
+          ? setMessages(prev => prev.map(m => m._id === messageId ? { ...m, deleted: true, message: 'This message was deleted' } : m))
+          : setMessages(prev => prev.filter(m => m._id !== messageId));
       }
-    } catch (error) {
-      console.error('Delete failed', error);
-      alert('Failed to delete message');
-    }
+    } catch { alert('Failed to delete message'); }
   };
 
   const handleEditMessage = async () => {
     if (!editingMessage || !editInput.trim()) return;
-    
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
+      const res   = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
         method: 'PATCH',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ newMessage: editInput })
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newMessage: editInput }),
       });
-
       if (res.ok) {
-        setMessages(prev => prev.map(m => 
-          m._id === editingMessage._id ? { ...m, message: editInput, edited: true } : m
-        ));
+        setMessages(prev => prev.map(m => m._id === editingMessage._id ? { ...m, message: editInput, edited: true } : m));
         setEditingMessage(null);
         setEditInput('');
       }
-    } catch (error) {
-      console.error('Edit failed', error);
-      alert('Failed to edit message');
-    }
+    } catch { alert('Failed to edit message'); }
   };
 
   const handleReaction = async (messageId: string, emoji: string) => {
+    setReactingToMessageId(null);
+    setMessages(prev => prev.map(m => {
+      if (m._id !== messageId) return m;
+      const reactions = [...(m.reactions || [])];
+      const idx = reactions.findIndex(r => {
+        const uid = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
+        return uid === doctorId && r.emoji === emoji;
+      });
+      idx > -1
+        ? reactions.splice(idx, 1)
+        : reactions.push({ user_id: { _id: doctorId, name: 'You' } as any, emoji });
+      return { ...m, reactions };
+    }));
     try {
       const token = getAuthToken();
-      setReactingToMessageId(null);
-
-      // Optimistic update
-      setMessages(prev => prev.map(m => {
-        if (m._id !== messageId) return m;
-        
-        const currentReactions = [...(m.reactions || [])];
-        const userId = doctorId;
-        
-        const existingIdx = currentReactions.findIndex(r => {
-          const rUserId = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
-          return rUserId === userId && r.emoji === emoji;
-        });
-
-        if (existingIdx > -1) {
-          currentReactions.splice(existingIdx, 1);
-        } else {
-          currentReactions.push({
-            user_id: { _id: userId, name: 'You' } as any,
-            emoji
-          });
-        }
-
-        return { ...m, reactions: currentReactions };
-      }));
-
       await fetch(`${API_BASE_URL}/messages/messages/${messageId}/react`, {
         method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ reaction: emoji })
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reaction: emoji }),
       });
-    } catch (error) {
-      console.error('Reaction failed', error);
-    }
+    } catch { console.error('Reaction failed'); }
   };
 
-  // --- Sub Components ---
+  // ─── Message bubble ──────────────────────────────────────────────────────────
 
   const MessageBubble = ({ msg }: { msg: Message }) => {
-    const isMe = getSenderId(msg.sender_id) === doctorId;
+    const isMe      = getSenderId(msg.sender_id) === doctorId;
     const isDeleted = msg.deleted;
     const isHovered = hoveredMessageId === msg._id;
-    const isFailed = msg._failed;
 
-    // Group reactions
-    const groupedReactions: { [key: string]: { count: number, reactedByMe: boolean } } = {};
+    const grouped: Record<string, { count: number; byMe: boolean }> = {};
     msg.reactions?.forEach(r => {
-      if (!groupedReactions[r.emoji]) groupedReactions[r.emoji] = { count: 0, reactedByMe: false };
-      groupedReactions[r.emoji].count++;
-      const rUserId = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
-      if (rUserId === doctorId) groupedReactions[r.emoji].reactedByMe = true;
+      if (!grouped[r.emoji]) grouped[r.emoji] = { count: 0, byMe: false };
+      grouped[r.emoji].count++;
+      const uid = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
+      if (uid === doctorId) grouped[r.emoji].byMe = true;
     });
 
     return (
-      <div 
-        className={`flex ${isMe ? 'justify-end' : 'justify-start'} mb-4 md:mb-6 group relative`}
+      <div
+        className={`flex ${isMe ? 'justify-end' : 'justify-start'} mb-4 group relative`}
         onMouseEnter={() => setHoveredMessageId(msg._id)}
         onMouseLeave={() => setHoveredMessageId(null)}
       >
-        <div className={`max-w-[85%] md:max-w-[70%] flex flex-col ${isMe ? 'items-end' : 'items-start'} relative`}>
-          
-          {/* Action Menu - Chỉ hiển thị khi không phải tin nhắn tạm thời */}
+        <div className={`max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'} relative`}>
+
+          {/* Action menu */}
           {!isDeleted && !msg._temp && (
-            <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} z-10 bg-white shadow-lg rounded-full px-2 py-1 flex gap-1 transition-opacity duration-200 border border-slate-100 ${isHovered || reactingToMessageId === msg._id ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} z-10 bg-white dark:bg-[#102023] shadow-lg rounded-full px-2 py-1 flex gap-1 transition-opacity border border-slate-100 dark:border-[#1e3438]
+              ${isHovered || reactingToMessageId === msg._id ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            >
               <ActionButton icon="add_reaction" onClick={() => setReactingToMessageId(msg._id)} />
-              {isMe && msg.message_type === 'text' && !isFailed && (
+              {isMe && msg.message_type === 'text' && !msg._failed && (
                 <ActionButton icon="edit" onClick={() => { setEditingMessage(msg); setEditInput(msg.message); }} />
               )}
-              {(isMe) && (
-                <ActionButton icon="delete" onClick={() => handleDeleteMessage(msg._id, 'everyone')} color="text-rose-400" hoverColor="hover:text-rose-600 hover:bg-rose-50" />
-              )}
-              {(!isMe) && (
-                <ActionButton icon="delete" onClick={() => handleDeleteMessage(msg._id, 'me')} color="text-rose-400" hoverColor="hover:text-rose-600 hover:bg-rose-50" />
-              )}
+              <ActionButton
+                icon="delete"
+                onClick={() => handleDeleteMessage(msg._id, isMe ? 'everyone' : 'me')}
+                color="text-rose-400"
+                hoverColor="hover:text-rose-600 hover:bg-rose-50"
+              />
             </div>
           )}
 
-          {/* Reaction Picker Popover */}
+          {/* Reaction picker */}
           {reactingToMessageId === msg._id && (
-            <div ref={reactionPickerRef} className={`absolute bottom-full mb-2 ${isMe ? 'right-0' : 'left-0'} z-50 shadow-2xl rounded-2xl animate-fade-in-up`}>
-              <EmojiPicker 
-                onEmojiClick={(emojiData) => handleReaction(msg._id, emojiData.emoji)}
-                width={300}
-                height={350}
+            <div ref={reactionPickerRef} className={`absolute bottom-full mb-2 ${isMe ? 'right-0' : 'left-0'} z-50 shadow-2xl rounded-2xl`}>
+              <EmojiPicker
+                onEmojiClick={(d) => handleReaction(msg._id, d.emoji)}
+                width={300} height={350}
                 searchDisabled={false}
                 previewConfig={{ showPreview: false }}
               />
             </div>
           )}
 
-          {/* Bubble Content */}
-          <div className={`shadow-sm transition-all relative ${
-            msg.message_type === 'image' 
-              ? 'rounded-2xl p-1 bg-white border border-slate-200' 
-              : `px-4 py-3 md:px-6 md:py-4 rounded-[1.5rem] md:rounded-[2rem] ${
-                  isDeleted ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
-                  isFailed ? 'bg-rose-50 text-rose-600 border border-rose-200' :
-                  isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
+          {/* Bubble */}
+          <div className={`shadow-sm transition-all ${
+            msg.message_type === 'image'
+              ? 'rounded-2xl p-1 bg-white border border-slate-100'
+              : `px-4 py-3 rounded-[1.5rem] ${
+                  isDeleted  ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
+                  msg._failed? 'bg-rose-50 text-rose-600 border border-rose-200' :
+                  isMe       ? 'bg-primary text-white rounded-br-none shadow-md shadow-primary/20'
+                             : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
                 }`
           }`}>
-            
-            {/* Deleted Message */}
             {isDeleted && (
               <div className="flex items-center gap-2 text-sm">
-                <span className="material-symbols-outlined text-lg">block</span>
+                <span className="material-symbols-outlined text-base">block</span>
                 <span>This message was deleted</span>
               </div>
             )}
-
-            {/* Failed Message */}
-            {isFailed && !isDeleted && (
+            {msg._failed && !isDeleted && (
               <div className="flex items-center gap-2 text-sm">
-                <span className="material-symbols-outlined text-lg">error</span>
-                <span>Failed to send - Will retry</span>
+                <span className="material-symbols-outlined text-base">error</span>
+                <span>Failed to send — will retry</span>
               </div>
             )}
-
-            {/* Normal Content */}
-            {!isDeleted && !isFailed && (
+            {!isDeleted && !msg._failed && (
               <>
                 {msg.message_type === 'text' && (
-                  <div className="text-[14px] md:text-[15px] font-medium leading-relaxed whitespace-pre-wrap">
+                  <p className="text-[14px] font-medium leading-relaxed whitespace-pre-wrap">
                     {msg.message}
                     {msg.edited && <span className="text-[10px] opacity-60 ml-2 italic">(edited)</span>}
-                    {msg._temp && <span className="text-[10px] opacity-60 ml-2">(sending...)</span>}
-                  </div>
+                    {msg._temp  && <span className="text-[10px] opacity-60 ml-2">(sending…)</span>}
+                  </p>
                 )}
-
                 {msg.message_type === 'image' && (
-                  <div className="relative group cursor-pointer">
-                    <img 
-                      src={getMediaUrl(msg.media_url)} 
-                      alt="Attachment" 
-                      className="rounded-xl max-h-[250px] md:max-h-[300px] object-cover w-auto h-auto min-w-[120px] min-h-[120px] bg-slate-100"
+                  <div className="relative group/img cursor-pointer">
+                    <img
+                      src={getMediaUrl(msg.media_url)}
+                      alt="Attachment"
+                      className="rounded-xl max-h-[260px] object-cover w-auto min-w-[120px] min-h-[120px] bg-slate-100"
                       loading="lazy"
                     />
-                    <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer" className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                      <span className="material-symbols-outlined text-white text-3xl">open_in_new</span>
+                    <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer"
+                      className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
+                      <span className="material-symbols-outlined text-white text-2xl">open_in_new</span>
                     </a>
                     {msg._temp && (
                       <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl">
-                        <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <div className="size-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
                       </div>
                     )}
                   </div>
                 )}
-
                 {msg.message_type === 'file' && (
                   <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center ${isMe ? 'bg-white/20' : 'bg-slate-100'}`}>
-                      <span className="material-symbols-outlined text-lg md:text-xl">description</span>
+                    <div className={`size-9 rounded-full flex items-center justify-center ${isMe ? 'bg-white/20' : 'bg-slate-100'}`}>
+                      <span className="material-symbols-outlined text-lg">description</span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold truncate text-xs md:text-sm max-w-[120px] md:max-w-[150px]">{msg.media_name || 'File'}</p>
-                      <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer" className={`text-xs hover:underline ${isMe ? 'text-blue-100' : 'text-blue-600'}`}>
+                      <p className="font-bold truncate text-sm max-w-[140px]">{msg.media_name || 'File'}</p>
+                      <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer"
+                        className={`text-xs hover:underline ${isMe ? 'text-white/70' : 'text-primary'}`}>
                         Download
                       </a>
                     </div>
@@ -944,27 +805,24 @@ const Messages: React.FC = () => {
             )}
           </div>
 
-          {/* Reactions Display */}
-          {!isDeleted && !isFailed && msg.reactions && msg.reactions.length > 0 && (
-            <div className={`flex gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'} flex-wrap max-w-full px-2`}>
-              {Object.entries(groupedReactions).map(([emoji, data]) => (
-                <button 
-                  key={emoji}
-                  onClick={() => handleReaction(msg._id, emoji)}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] md:text-xs font-bold border transition-colors ${data.reactedByMe ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                >
-                  <span>{emoji}</span>
-                  <span>{data.count}</span>
+          {/* Reactions */}
+          {!isDeleted && !msg._failed && Object.keys(grouped).length > 0 && (
+            <div className={`flex gap-1 mt-1 flex-wrap px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+              {Object.entries(grouped).map(([emoji, d]) => (
+                <button key={emoji} onClick={() => handleReaction(msg._id, emoji)}
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-bold border transition-colors
+                    ${d.byMe ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                  <span>{emoji}</span><span>{d.count}</span>
                 </button>
               ))}
             </div>
           )}
 
-          {/* Meta Info */}
-          <div className="mt-1 md:mt-2 text-[10px] font-black opacity-60 flex items-center gap-1 md:gap-2 px-1">
+          {/* Timestamp */}
+          <div className="mt-1 text-[10px] font-semibold opacity-50 flex items-center gap-1 px-1">
             {safeFormatTime(msg.timestamp)}
-            {isMe && !isDeleted && !isFailed && (
-              <span className="material-symbols-outlined text-[12px] md:text-[14px]">
+            {isMe && !isDeleted && !msg._failed && (
+              <span className="material-symbols-outlined text-[12px]">
                 {msg.read ? 'done_all' : msg._temp ? 'pending' : 'done'}
               </span>
             )}
@@ -974,149 +832,252 @@ const Messages: React.FC = () => {
     );
   };
 
-  // --- Main Render ---
+  // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen h-[100dvh] bg-[#F8FAFC] overflow-hidden text-slate-900 font-sans relative">
-      
-      {/* Edit Modal */}
+    <div className="flex h-screen bg-slate-50 dark:bg-[#0b1619] overflow-hidden text-slate-900 dark:text-white">
+
+      {/* Edit modal */}
       {editingMessage && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl animate-fade-in-up">
-            <h3 className="text-lg font-bold mb-4">Edit Message</h3>
-            <input 
+          <div className="bg-white dark:bg-[#102023] rounded-2xl w-full max-w-md p-6 shadow-2xl border border-slate-100 dark:border-[#1e3438]">
+            <h3 className="text-base font-black text-slate-900 dark:text-white mb-4">Edit message</h3>
+            <input
               value={editInput}
-              onChange={(e) => setEditInput(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-blue-500"
+              onChange={e => setEditInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleEditMessage(); }}
+              className="w-full bg-slate-50 dark:bg-[#1a2c2f] border border-slate-200 dark:border-[#224449] rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-primary text-sm dark:text-white"
               autoFocus
             />
             <div className="flex justify-end gap-3">
-              <button onClick={() => setEditingMessage(null)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-50 rounded-lg">Cancel</button>
-              <button onClick={handleEditMessage} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Save</button>
+              <button onClick={() => setEditingMessage(null)} className="px-4 py-2 text-sm text-slate-500 font-bold hover:bg-slate-50 dark:hover:bg-[#1a2c2f] rounded-lg transition-colors">Cancel</button>
+              <button onClick={handleEditMessage} className="px-5 py-2 text-sm bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-colors">Save</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Sidebar */}
-      <div className={`w-full md:w-80 lg:w-[400px] flex-col border-r border-slate-200 bg-white z-20 flex-shrink-0 ${selectedConv ? 'hidden md:flex' : 'flex'}`}>
-        {/* Sidebar Header */}
-        <div className="p-6 md:p-8 pb-4">
-          <div className="flex items-center justify-between mb-6 md:mb-8">
-            <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900">Chats</h1>
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold uppercase transition-all duration-300 ${isSocketConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-              <span className={`w-2 h-2 rounded-full ${isSocketConnected ? 'bg-emerald-500 shadow-lg' : 'bg-rose-500 animate-pulse'}`}></span>
+      {/* ── SIDEBAR ───────────────────────────────────────────────────────── */}
+      <div className={`w-full md:w-80 lg:w-[340px] flex flex-col border-r border-slate-200 dark:border-[#1e3438] bg-white dark:bg-[#102023] shrink-0 ${selectedConv ? 'hidden md:flex' : 'flex'}`}>
+
+        {/* Sidebar header */}
+        <div className="px-5 pt-6 pb-3">
+          <div className="flex items-center justify-between mb-5">
+            <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Messages</h1>
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase
+              ${isSocketConnected ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' : 'bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400'}`}
+            >
+              <span className={`size-1.5 rounded-full ${isSocketConnected ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`} />
               {isSocketConnected ? 'Live' : 'Offline'}
             </div>
           </div>
-          <div className="relative group">
-            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-            <input className="w-full pl-12 pr-4 py-3 md:py-4 rounded-2xl bg-slate-50 outline-none text-sm font-medium" placeholder="Search patients..." />
+
+          {/* Search input */}
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none">
+              {searchStatus === 'searching' ? 'hourglass_empty' : 'search'}
+            </span>
+            <input
+              value={searchQuery}
+              onChange={handleSearchChange}
+              placeholder="Search name or phone number…"
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-slate-50 dark:bg-[#1a2c2f] border border-slate-100 dark:border-[#224449] text-sm text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(''); setSearchResult(null); setSearchStatus('idle'); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <span className="material-symbols-outlined text-base">close</span>
+              </button>
+            )}
           </div>
+
+          {/* ── Phone search results ──────────────────────────────────────── */}
+          {searchQuery && isPhoneLike(searchQuery) && (
+            <div className="mt-2 rounded-xl border border-slate-100 dark:border-[#224449] bg-white dark:bg-[#1a2c2f] overflow-hidden shadow-lg">
+              {searchStatus === 'searching' && (
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0" />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Searching for user…</p>
+                </div>
+              )}
+
+              {searchStatus === 'found' && searchResult && (
+                <div className="p-2">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide px-2 pb-1">
+                    Patient found
+                  </p>
+                  <button
+                    onClick={() => handleStartConversation(searchResult)}
+                    disabled={startingConv}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-primary/5 dark:hover:bg-primary/10 transition-colors group"
+                  >
+                    <Avatar user={searchResult} size="sm" />
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="text-sm font-bold text-slate-800 dark:text-white group-hover:text-primary transition-colors truncate">
+                        {searchResult.name}
+                      </p>
+                      <p className="text-[11px] text-slate-400">{searchResult.phoneNumber}</p>
+                    </div>
+                    <div className={`shrink-0 flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-xl text-white bg-primary transition-opacity ${startingConv ? 'opacity-50' : 'hover:bg-primary/90'}`}>
+                      {startingConv ? (
+                        <div className="size-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined text-sm">chat</span>
+                          Chat
+                        </>
+                      )}
+                    </div>
+                  </button>
+                </div>
+              )}
+
+              {searchStatus === 'not-found' && (
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <div className="size-7 rounded-full bg-slate-100 dark:bg-[#224449] flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-slate-400 text-sm">person_off</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">No patient found</p>
+                    <p className="text-[11px] text-slate-400">This phone number is not registered</p>
+                  </div>
+                </div>
+              )}
+
+              {searchStatus === 'error' && (
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <span className="material-symbols-outlined text-rose-400 text-base">error</span>
+                  <p className="text-xs text-slate-500">Search failed — please try again</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Conversation List */}
-        <div className="flex-1 overflow-y-auto px-4 pb-8 scrollbar-hide">
+        {/* Conversation list */}
+        <div className="flex-1 overflow-y-auto px-3 pb-6">
           {loading ? (
-             <div className="flex flex-col items-center justify-center h-full opacity-40">
-               <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-             </div>
+            <div className="flex items-center justify-center py-12">
+              <div className="size-7 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
           ) : conversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8">
-              <span className="material-symbols-outlined text-6xl text-slate-300 mb-4">forum</span>
-              <p className="text-slate-400 font-medium">No conversations yet</p>
+            <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+              <div className="size-14 rounded-2xl bg-slate-100 dark:bg-[#1a2c2f] flex items-center justify-center mb-3">
+                <span className="material-symbols-outlined text-slate-400 text-2xl">forum</span>
+              </div>
+              <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">No conversations yet</p>
+              <p className="text-xs text-slate-400 mt-1">Search by phone number to start a chat</p>
             </div>
           ) : (
-            <div className="space-y-1">
-              {conversations.map(conv => {
-                const isActive = selectedConv?._id === conv._id;
-                return (
-                  <div 
-                    key={conv._id} 
-                    onClick={() => setSelectedConv(conv)} 
-                    className={`p-4 flex gap-4 cursor-pointer rounded-[2rem] md:rounded-[2.5rem] transition-all border-2 ${isActive ? 'bg-blue-600 border-blue-600 shadow-xl text-white' : 'hover:bg-slate-50 border-transparent'}`}
-                  >
-                    <img src={getAvatarUrl(conv.participant?.avatar)} className="w-12 h-12 md:w-14 md:h-14 rounded-[1.2rem] md:rounded-[1.6rem] object-cover" alt="" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-baseline">
-                        <h4 className="font-black truncate text-[14px] md:text-[15px]">{conv.participant?.name}</h4>
-                        <span className="text-[10px] font-bold opacity-70">{safeFormatTime(conv.last_message_at)}</span>
+            <div className="space-y-0.5">
+              {conversations
+                .filter(c => {
+                  if (!searchQuery || isPhoneLike(searchQuery)) return true;
+                  return c.participant?.name?.toLowerCase().includes(searchQuery.toLowerCase());
+                })
+                .map(conv => {
+                  const isActive = selectedConv?._id === conv._id;
+                  return (
+                    <div
+                      key={conv._id}
+                      onClick={() => setSelectedConv(conv)}
+                      className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all group
+                        ${isActive
+                          ? 'bg-primary text-white shadow-md shadow-primary/20'
+                          : 'hover:bg-slate-50 dark:hover:bg-[#1a2c2f]'}`}
+                    >
+                      <div className="relative shrink-0">
+                        <Avatar user={conv.participant} size="md" />
+                        {isSocketConnected && (
+                          <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 ${isActive ? 'border-primary bg-emerald-400' : 'border-white dark:border-[#102023] bg-emerald-400'}`} />
+                        )}
                       </div>
-                      <p className="text-[12px] md:text-[13px] truncate opacity-80">{extractMessagePreview(conv.last_message)}</p>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className={`text-sm font-bold truncate ${isActive ? 'text-white' : 'text-slate-800 dark:text-white'}`}>
+                            {conv.participant?.name || 'Unknown'}
+                          </p>
+                          <span className={`text-[10px] font-semibold shrink-0 ${isActive ? 'text-white/70' : 'text-slate-400'}`}>
+                            {safeFormatTime(conv.last_message_at)}
+                          </span>
+                        </div>
+                        <p className={`text-xs truncate mt-0.5 ${isActive ? 'text-white/70' : 'text-slate-400'}`}>
+                          {extractPreview(conv.last_message) || 'No messages yet'}
+                        </p>
+                      </div>
+                      {conv.unread_count > 0 && !isActive && (
+                        <span className="size-5 bg-red-500 rounded-full flex items-center justify-center text-[9px] font-black text-white shrink-0">
+                          {conv.unread_count > 9 ? '9+' : conv.unread_count}
+                        </span>
+                      )}
                     </div>
-                    {conv.unread_count > 0 && !isActive && (
-                      <span className="w-5 h-5 bg-rose-500 rounded-full flex items-center justify-center text-[10px] font-black text-white">
-                        {conv.unread_count}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           )}
         </div>
       </div>
 
-      {/* Main Chat Area */}
-      <div className={`flex-1 flex-col bg-white h-full relative overflow-hidden ${selectedConv ? 'flex fixed inset-0 z-50 md:static' : 'hidden md:flex'}`}>
+      {/* ── CHAT AREA ──────────────────────────────────────────────────────── */}
+      <div className={`flex-1 flex-col h-full overflow-hidden bg-white dark:bg-[#102023] ${selectedConv ? 'flex fixed inset-0 z-50 md:static' : 'hidden md:flex'}`}>
         {selectedConv ? (
           <>
-            {/* Header */}
-            <header className="flex-none px-4 md:px-10 py-4 md:py-6 border-b border-slate-100 flex justify-between items-center bg-white/95 backdrop-blur-xl z-30 shadow-sm md:shadow-none">
-              <div className="flex items-center gap-3 md:gap-5">
-                <button 
-                  onClick={() => { 
-                    setSelectedConv(null); 
-                    setMessages([]); 
-                  }} 
-                  className="md:hidden p-2 -ml-2 text-slate-500 hover:bg-slate-50 rounded-full"
+            {/* Chat header */}
+            <header className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-[#1e3438] bg-white/95 dark:bg-[#102023]/95 backdrop-blur-xl z-20 shadow-sm">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setSelectedConv(null); setMessages([]); }}
+                  className="md:hidden size-9 flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-[#1a2c2f] transition-colors -ml-1"
                 >
                   <span className="material-symbols-outlined">arrow_back</span>
                 </button>
                 <div className="relative">
-                  <img src={getAvatarUrl(selectedConv.participant?.avatar)} className="w-10 h-10 md:w-14 md:h-14 rounded-2xl md:rounded-3xl object-cover border-2 md:border-4 border-slate-50" alt="" />
-                  <span className={`absolute -bottom-1 -right-1 w-3 h-3 md:w-4 md:h-4 border-[2px] md:border-[3px] border-white rounded-full ${isSocketConnected ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
+                  <Avatar user={selectedConv.participant} size="md" />
+                  <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-white dark:border-[#102023] ${isSocketConnected ? 'bg-emerald-400' : 'bg-slate-300'}`} />
                 </div>
                 <div>
-                  <h3 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">{selectedConv.participant?.name}</h3>
-                  <p className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase tracking-widest">P-{selectedConv._id.slice(-5).toUpperCase()}</p>
+                  <p className="text-base font-black text-slate-900 dark:text-white">
+                    {selectedConv.participant?.name}
+                  </p>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
+                    {selectedConv.participant?.phoneNumber || `ID · ${selectedConv._id.slice(-5).toUpperCase()}`}
+                  </p>
                 </div>
               </div>
               {typingUsers.size > 0 && (
-                <div className="flex items-center gap-2 text-xs md:text-sm text-slate-500 animate-pulse">
-                  <span className="material-symbols-outlined text-sm md:text-base">edit</span>
-                  <span className="hidden md:inline">Typing...</span>
+                <div className="flex items-center gap-2 text-xs text-slate-500 animate-pulse">
+                  <span className="material-symbols-outlined text-sm">edit</span>
+                  Typing…
                 </div>
               )}
             </header>
 
-            {/* Messages List */}
-            <div className="flex-1 overflow-y-auto px-4 md:px-10 pt-4 md:pt-8 pb-4 bg-slate-50/30 scroll-smooth">
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto px-5 py-5 bg-slate-50/40 dark:bg-[#0b1619]/60 scroll-smooth">
               {messagesLoading ? (
                 <div className="h-full flex items-center justify-center">
-                  <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <div className="size-7 border-[3px] border-primary border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-8">
-                  <span className="material-symbols-outlined text-5xl md:text-6xl text-slate-300 mb-4">chat_bubble</span>
-                  <h3 className="text-lg md:text-xl font-bold text-slate-400 mb-2">No messages yet</h3>
-                  <p className="text-sm md:text-base text-slate-400">Start the conversation by sending a message</p>
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3">
+                  <div className="size-14 rounded-2xl bg-white dark:bg-[#102023] border border-slate-100 dark:border-[#1e3438] flex items-center justify-center shadow-sm">
+                    <span className="material-symbols-outlined text-slate-400 text-2xl">chat_bubble</span>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">No messages yet</p>
+                  <p className="text-xs text-slate-400">Send a message to start the conversation</p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {messages.map((msg, idx) => (
-                    <MessageBubble key={msg._id || idx} msg={msg} />
-                  ))}
-                  
+                <div className="space-y-1">
+                  {messages.map((msg, i) => <MessageBubble key={msg._id || i} msg={msg} />)}
                   {typingUsers.size > 0 && (
-                    <div className="flex justify-start mb-6">
-                      <div className="max-w-[75%] lg:max-w-[60%]">
-                        <div className="px-4 py-3 md:px-6 md:py-4 rounded-[2rem] bg-white text-slate-700 rounded-bl-none border border-slate-100">
-                          <div className="flex gap-1">
-                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                          </div>
+                    <div className="flex justify-start mb-4">
+                      <div className="px-4 py-3 rounded-2xl bg-white dark:bg-[#102023] border border-slate-100 dark:border-[#1e3438] rounded-bl-none">
+                        <div className="flex gap-1">
+                          {[0, 150, 300].map(d => (
+                            <div key={d} className="size-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                          ))}
                         </div>
                       </div>
                     </div>
@@ -1126,100 +1087,82 @@ const Messages: React.FC = () => {
               )}
             </div>
 
-            {/* Input Area */}
-            <div className="flex-none bg-white border-t border-slate-50 px-3 md:px-10 pt-3 pb-4 md:pb-8 z-20 safe-area-bottom">
-              <div className="max-w-4xl mx-auto flex items-center gap-2 md:gap-3 bg-slate-50 md:bg-white md:border border-slate-200/80 rounded-3xl md:rounded-[2.5rem] p-2 md:p-3 md:shadow-xl transition-all relative">
-                
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  className="hidden" 
-                  accept="image/*,.pdf,.doc,.docx,.txt" 
-                  onChange={handleFileSelect} 
-                />
+            {/* Input area */}
+            <div className="shrink-0 bg-white dark:bg-[#102023] border-t border-slate-100 dark:border-[#1e3438] px-4 py-3">
+              <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#1a2c2f] border border-slate-100 dark:border-[#224449] rounded-2xl px-3 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                <input type="file" ref={fileInputRef} className="hidden" accept="image/*,.pdf,.doc,.docx,.txt" onChange={handleFileSelect} />
 
-                <button 
-                  onClick={() => fileInputRef.current?.click()} 
-                  className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center hover:bg-slate-200 md:hover:bg-slate-100 text-slate-400 hover:text-blue-600 transition-colors flex-shrink-0" 
+                <button
+                  onClick={() => fileInputRef.current?.click()}
                   disabled={sending}
+                  className="size-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors shrink-0"
                 >
-                  <span className="material-symbols-outlined text-xl md:text-2xl">attach_file</span>
+                  <span className="material-symbols-outlined text-lg">attach_file</span>
                 </button>
 
                 <div className="relative" ref={emojiRef}>
-                  <button 
-                    onClick={() => setShowInputEmojiPicker(!showInputEmojiPicker)} 
-                    className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center hover:bg-slate-200 md:hover:bg-slate-100 transition-colors flex-shrink-0 ${showInputEmojiPicker ? 'text-yellow-500 bg-yellow-50' : 'text-slate-400 hover:text-yellow-500'}`} 
+                  <button
+                    onClick={() => setShowInputEmojiPicker(v => !v)}
                     disabled={sending}
+                    className={`size-8 flex items-center justify-center rounded-xl transition-colors shrink-0
+                      ${showInputEmojiPicker ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20' : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'}`}
                   >
-                    <span className="material-symbols-outlined text-xl md:text-2xl">sentiment_satisfied</span>
+                    <span className="material-symbols-outlined text-lg">sentiment_satisfied</span>
                   </button>
-                  
                   {showInputEmojiPicker && (
-                    <div className="absolute bottom-full left-0 mb-4 z-50 shadow-2xl rounded-2xl border border-slate-100 animate-fade-in-up">
-                      <EmojiPicker 
-                        onEmojiClick={handleInputEmojiClick} 
-                        width={300} 
-                        height={400} 
-                        searchDisabled={false} 
-                        previewConfig={{ showPreview: false }} 
+                    <div className="absolute bottom-full left-0 mb-3 z-50 shadow-2xl rounded-2xl border border-slate-100 dark:border-[#1e3438]">
+                      <EmojiPicker
+                        onEmojiClick={(d: EmojiClickData) => { setInput(p => p + d.emoji); handleTypingStart(); }}
+                        width={300} height={380}
+                        searchDisabled={false}
+                        previewConfig={{ showPreview: false }}
                       />
                     </div>
                   )}
                 </div>
 
-                <input 
-                  value={input} 
-                  onChange={handleInputChange}
-                  onKeyDown={(e) => { 
-                    if (e.key === 'Enter' && !e.shiftKey) { 
-                      e.preventDefault(); 
-                      handleSendText(); 
-                    } 
-                  }}
+                <input
+                  value={input}
+                  onChange={e => { setInput(e.target.value); handleTypingStart(); }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
                   onBlur={handleTypingStop}
-                  placeholder="Type message..." 
-                  className="flex-1 bg-transparent border-none px-2 py-3 md:py-4 outline-none font-medium text-[15px] md:text-[15px]" 
+                  placeholder="Type a message…"
+                  className="flex-1 bg-transparent text-sm text-slate-800 dark:text-white placeholder:text-slate-400 outline-none py-1.5 px-2"
                   disabled={sending}
                 />
-                
-                <button 
-                  onClick={handleSendText} 
-                  disabled={!input.trim() || sending} 
-                  className={`w-10 h-10 md:w-14 md:h-14 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${input.trim() ? 'bg-blue-600 text-white shadow-lg hover:bg-blue-700 active:scale-95' : 'bg-slate-200 md:bg-slate-100 text-slate-300'}`}
+
+                <button
+                  onClick={handleSendText}
+                  disabled={!input.trim() || sending}
+                  className={`size-9 flex items-center justify-center rounded-xl shrink-0 transition-all
+                    ${input.trim() && !sending ? 'bg-primary text-white hover:bg-primary/90 shadow-md shadow-primary/20 active:scale-95' : 'bg-slate-200 dark:bg-[#224449] text-slate-400'}`}
                 >
-                  {sending ? (
-                    <div className="w-4 h-4 md:w-5 md:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  ) : (
-                    <span className="material-symbols-outlined font-bold text-lg md:text-xl">send</span>
-                  )}
+                  {sending
+                    ? <div className="size-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    : <span className="material-symbols-outlined text-lg">send</span>
+                  }
                 </button>
               </div>
-              
-              <div className="mt-2 md:mt-3 text-center">
-                <div className="inline-flex items-center gap-2 text-[10px] md:text-xs text-slate-400 font-medium">
-                  {sending ? (
-                    <>
-                      <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                      <span>Sending...</span>
-                    </>
-                  ) : !isSocketConnected && (
-                    <>
-                      <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-rose-500 rounded-full animate-pulse"></div>
-                      <span>Disconnected - Using queue</span>
-                    </>
-                  )}
+
+              {/* Status line */}
+              {(sending || !isSocketConnected) && (
+                <div className="flex items-center justify-center gap-1.5 mt-2 text-[10px] text-slate-400">
+                  <span className={`size-1.5 rounded-full ${sending ? 'bg-primary animate-pulse' : 'bg-rose-400 animate-pulse'}`} />
+                  {sending ? 'Sending…' : 'Offline — messages will be queued'}
                 </div>
-              </div>
+              )}
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-20 text-center select-none">
-            <div className="w-24 h-24 md:w-32 md:h-32 bg-slate-50 rounded-[2.5rem] md:rounded-[3rem] flex items-center justify-center mb-6 md:mb-8 shadow-inner animate-pulse-slow">
-               <span className="material-symbols-outlined text-5xl md:text-6xl text-blue-600/20">chat_bubble</span>
+          /* No conversation selected */
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center select-none">
+            <div className="size-20 rounded-3xl bg-slate-100 dark:bg-[#1a2c2f] flex items-center justify-center mb-5 shadow-inner">
+              <span className="material-symbols-outlined text-primary/30 text-5xl">chat_bubble</span>
             </div>
-            <h2 className="text-2xl md:text-4xl font-black text-slate-900 mb-3 md:mb-4 tracking-tight">MediCare Messaging</h2>
-            <p className="text-sm md:text-lg font-bold text-slate-400 max-w-xs md:max-w-none mx-auto">Select a verified patient to start consultation</p>
+            <h2 className="text-xl font-black text-slate-900 dark:text-white mb-2">Your messages</h2>
+            <p className="text-sm text-slate-400 max-w-[220px]">
+              Select a conversation or search by phone number to start chatting
+            </p>
           </div>
         )}
       </div>

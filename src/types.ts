@@ -40,7 +40,7 @@ export interface Appointment {
   appointment_date: string;
   time_slot: string;
   reason?: string;
-  status: 'pending' | 'confirmed' | 'completed' | 'scheduled'| 'cancelled';
+  status: 'pending' | 'confirmed' | 'completed' | 'scheduled'| 'cancelled'|'checked-in';
   notes?: string;
   created_at: string;
 }
@@ -349,6 +349,7 @@ export interface User {
   blood_type?: string; // Từ UserInformation (mới)
   allergies?: string[];
   status?: string;
+  created_at: string;
 }
 
 export interface Consultation {
@@ -360,8 +361,8 @@ export interface Consultation {
   severity: 'mild' | 'moderate' | 'severe' | 'critical';
   notes?: string;
   treatment_plan: TreatmentStep[];
-  consultation_status: 'in-progress' | 'completed' | 'cancelled';
-  status: 'active' | 'resolved' | 'follow_up' | 'chronic';
+  consultation_status: 'in-progress' | 'completed' | 'cancelled' | 'active';
+  status: 'active' | 'resolved' | 'follow_up' | 'chronic' | 'completed';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   created_at: string;
   updated_at: string;
