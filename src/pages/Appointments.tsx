@@ -446,41 +446,6 @@ const Appointments: React.FC = () => {
     } catch { alert('Error starting consultation. Please check your connection.'); }
   };
 
-  const submitFollowUp = async () => {
-    if (!lastCompletedAppt || (!followUpOption && !followUpCustomDate)) return;
-    setSchedulingFollowUp(true);
-    try {
-      let followUpDate: Date;
-      if (followUpCustomDate) {
-        followUpDate = new Date(followUpCustomDate);
-      } else {
-        followUpDate = new Date();
-        followUpDate.setDate(followUpDate.getDate() + (followUpOption ?? 14));
-      }
-      const token = localStorage.getItem('token') || '';
-      const res = await fetch(`${API_BASE_URL}/appointments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          user_id:          lastCompletedAppt.user_id?._id,
-          doctor_id:        doctorId,
-          appointment_date: followUpDate.toISOString().split('T')[0],
-          time_slot:        lastCompletedAppt.time_slot,
-          reason:           `Follow-up: ${lastCompletedAppt.reason || 'Re-examination'}`,
-          status:           'confirmed',
-          source_consultation_id: lastConsultationId,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setShowFollowUpModal(false);
-        await fetchAppointments();
-      } else {
-        alert('Could not schedule follow-up: ' + (data.message || ''));
-      }
-    } catch { alert('Error scheduling follow-up.'); }
-    finally { setSchedulingFollowUp(false); }
-  };
 
   // ─── Filtering & Stats ──────────────────────────────────────────────────────
 
@@ -1558,24 +1523,6 @@ const Appointments: React.FC = () => {
                     </span>
                   </div>
                 )}
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setShowFollowUpModal(false); if (lastConsultationId) navigate(`/consultations/${lastConsultationId}`); }}
-                    className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-[#224449] text-slate-500 dark:text-slate-400 font-semibold text-sm hover:bg-slate-50 dark:hover:bg-[#1a2c2f] transition-colors"
-                  >
-                    Skip
-                  </button>
-                  <button
-                    onClick={submitFollowUp}
-                    disabled={(!followUpOption && !followUpCustomDate) || schedulingFollowUp}
-                    className="flex-1 py-2.5 rounded-xl bg-primary text-white font-bold text-sm hover:bg-primary/90 shadow-md shadow-primary/20 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
-                  >
-                    {schedulingFollowUp
-                      ? <span className="inline-block animate-spin rounded-full h-4 w-4 border-2 border-b-transparent border-white" />
-                      : <><span className="material-symbols-outlined text-sm">add_circle</span> Schedule</>}
-                  </button>
-                </div>
               </div>
             </div>
           </div>

@@ -1223,7 +1223,11 @@ const AdminDashboard: React.FC = () => {
                          </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-700">{doc.specialty || '-'}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-slate-700">
+                      {typeof doc.specialty === 'object' && doc.specialty !== null
+                        ? (doc.specialty as any).name
+                        : doc.specialty || '-'}
+                    </td>
                     <td className="px-6 py-4 text-sm text-slate-500 font-mono tracking-wide">{doc.licenseNumber || '-'}</td>
                     <td className="px-6 py-4 text-sm text-slate-700">{doc.yearsOfExperience || 0} yrs</td>
                     <td className="px-6 py-4 text-sm font-bold text-slate-800">${doc.consultationFee || 0}</td>

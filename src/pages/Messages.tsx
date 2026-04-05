@@ -57,9 +57,9 @@ interface Conversation {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const MESSAGE_TIMEOUT  = 3000;
-const MAX_RETRY_COUNT  = 2;
-const TYPING_TIMEOUT   = 2000;
+const MESSAGE_TIMEOUT = 3000;
+const MAX_RETRY_COUNT = 2;
+const TYPING_TIMEOUT = 2000;
 
 // Phone: starts with 0 or +84, at least 9 digits
 const PHONE_REGEX = /^(\+84|0)[0-9]{8,10}$/;
@@ -117,9 +117,9 @@ const getAvatarColor = (name: string) => {
 const Avatar: React.FC<{ user?: User | null; size?: 'sm' | 'md' | 'lg' }> = ({
   user, size = 'md',
 }) => {
-  const dim  = size === 'lg' ? 'size-14' : size === 'md' ? 'size-12' : 'size-9';
+  const dim = size === 'lg' ? 'size-14' : size === 'md' ? 'size-12' : 'size-9';
   const text = size === 'lg' ? 'text-lg' : size === 'md' ? 'text-sm' : 'text-xs';
-  const url  = getAvatarUrl(user?.avatar);
+  const url = getAvatarUrl(user?.avatar);
   const hasAvatar = user?.avatar && user.avatar !== 'undefined' && user.avatar !== 'null';
 
   return (
@@ -143,41 +143,41 @@ const Messages: React.FC = () => {
   const doctorId = getDoctorId();
 
   // ── Core state ───────────────────────────────────────────────────────────────
-  const [conversations, setConversations]     = useState<Conversation[]>([]);
-  const [selectedConv, setSelectedConv]       = useState<Conversation | null>(null);
-  const [messages, setMessages]               = useState<Message[]>([]);
-  const [input, setInput]                     = useState('');
-  const [loading, setLoading]                 = useState(true);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
-  const [sending, setSending]                 = useState(false);
+  const [sending, setSending] = useState(false);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
-  const [typingUsers, setTypingUsers]         = useState<Set<string>>(new Set());
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
 
   // ── UI state ─────────────────────────────────────────────────────────────────
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
-  const [hoveredMessageId, setHoveredMessageId]         = useState<string | null>(null);
-  const [editingMessage, setEditingMessage]             = useState<Message | null>(null);
-  const [editInput, setEditInput]                       = useState('');
-  const [reactingToMessageId, setReactingToMessageId]   = useState<string | null>(null);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [editInput, setEditInput] = useState('');
+  const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
 
   // ── Phone search state ───────────────────────────────────────────────────────
-  const [searchQuery, setSearchQuery]         = useState('');
-  const [searchResult, setSearchResult]       = useState<User | null>(null);
-  const [searchStatus, setSearchStatus]       = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
-  const [startingConv, setStartingConv]       = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResult, setSearchResult] = useState<User | null>(null);
+  const [searchStatus, setSearchStatus] = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
+  const [startingConv, setStartingConv] = useState(false);
 
   // ── Refs ─────────────────────────────────────────────────────────────────────
-  const messagesEndRef      = useRef<HTMLDivElement>(null);
-  const socketRef           = useRef<any>(null);
-  const selectedConvRef     = useRef<Conversation | null>(null);
-  const fileInputRef        = useRef<HTMLInputElement>(null);
-  const emojiRef            = useRef<HTMLDivElement>(null);
-  const reactionPickerRef   = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef    = useRef<NodeJS.Timeout | null>(null);
-  const searchTimeoutRef    = useRef<NodeJS.Timeout | null>(null);
-  const scrollTimeoutRef    = useRef<NodeJS.Timeout | null>(null);
-  const messageQueueRef     = useRef<Map<string, { message: Message; data: any; retries: number }>>(new Map());
-  const pendingMessagesRef  = useRef<Set<string>>(new Set());
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<any>(null);
+  const selectedConvRef = useRef<Conversation | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const emojiRef = useRef<HTMLDivElement>(null);
+  const reactionPickerRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const messageQueueRef = useRef<Map<string, { message: Message; data: any; retries: number }>>(new Map());
+  const pendingMessagesRef = useRef<Set<string>>(new Set());
 
   useEffect(() => { selectedConvRef.current = selectedConv; }, [selectedConv]);
 
@@ -222,7 +222,7 @@ const Messages: React.FC = () => {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
       });
-    } catch (_) {}
+    } catch (_) { }
   }, []);
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -236,9 +236,9 @@ const Messages: React.FC = () => {
 
   const extractPreview = useCallback((m?: Message): string => {
     if (!m) return '';
-    if (m.deleted)               return '🚫 Message deleted';
+    if (m.deleted) return '🚫 Message deleted';
     if (m.message_type === 'image') return '📷 Photo';
-    if (m.message_type === 'file')  return '📎 Attachment';
+    if (m.message_type === 'file') return '📎 Attachment';
     return (m as any).message || (m as any).content || '';
   }, []);
 
@@ -259,7 +259,7 @@ const Messages: React.FC = () => {
       searchTimeoutRef.current = setTimeout(async () => {
         try {
           const token = getAuthToken();
-          const res   = await fetch(
+          const res = await fetch(
             `${API_BASE_URL}/messages/search-user?phone=${encodeURIComponent(val.trim())}`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
@@ -285,10 +285,10 @@ const Messages: React.FC = () => {
     setStartingConv(true);
     try {
       const token = getAuthToken();
-      const res   = await fetch(`${API_BASE_URL}/messages/conversations/find-or-create`, {
-        method:  'POST',
+      const res = await fetch(`${API_BASE_URL}/messages/conversations/find-or-create`, {
+        method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ participantId: user._id }),
+        body: JSON.stringify({ participantId: user._id }),
       });
       const data = await res.json();
       if (data.success && data.data) {
@@ -454,7 +454,7 @@ const Messages: React.FC = () => {
   const fetchConversations = useCallback(async () => {
     try {
       const token = getAuthToken();
-      const res   = await fetch(`${API_BASE_URL}/messages/conversations`, {
+      const res = await fetch(`${API_BASE_URL}/messages/conversations`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -467,14 +467,14 @@ const Messages: React.FC = () => {
           );
       }
     } catch (e) { console.error(e); }
-    finally    { setLoading(false); }
+    finally { setLoading(false); }
   }, []);
 
   const fetchMessages = useCallback(async (conversationId: string) => {
     setMessagesLoading(true);
     try {
       const token = getAuthToken();
-      const res   = await fetch(
+      const res = await fetch(
         `${API_BASE_URL}/messages/conversations/${conversationId}/messages`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -491,7 +491,7 @@ const Messages: React.FC = () => {
         }
       }
     } catch (e) { console.error(e); }
-    finally    { setMessagesLoading(false); }
+    finally { setMessagesLoading(false); }
   }, [markAsReadAPI, debouncedScrollToBottom]);
 
   // ─── Init ────────────────────────────────────────────────────────────────────
@@ -546,7 +546,7 @@ const Messages: React.FC = () => {
 
   const handleSendText = async () => {
     if (!input.trim() || !selectedConv || sending) return;
-    const text   = input.trim();
+    const text = input.trim();
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tempMsg: Message = {
       _id: tempId, conversation_id: selectedConv._id,
@@ -568,7 +568,7 @@ const Messages: React.FC = () => {
       messageQueueRef.current.set(tempId, { message: tempMsg, data: msgData, retries: 0 });
       try {
         const token = getAuthToken();
-        const res   = await fetch(`${API_BASE_URL}/messages/send`, {
+        const res = await fetch(`${API_BASE_URL}/messages/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ receiver_id: selectedConv.participant._id, message: text, message_type: 'text' }),
@@ -590,7 +590,7 @@ const Messages: React.FC = () => {
     if (!file || !selectedConv || sending) return;
     if (file.size > 10 * 1024 * 1024) { alert('File is too large (Max 10MB)'); return; }
     const isImage = file.type.startsWith('image/');
-    const tempId  = `temp_media_${Date.now()}`;
+    const tempId = `temp_media_${Date.now()}`;
     const blobUrl = URL.createObjectURL(file);
     const tempMsg: Message = {
       _id: tempId, conversation_id: selectedConv._id,
@@ -609,7 +609,7 @@ const Messages: React.FC = () => {
     if (selectedConv.medical_record_id) formData.append('medical_record_id', selectedConv.medical_record_id.toString());
     try {
       const token = getAuthToken();
-      const res   = await fetch(`${API_BASE_URL}/messages/send-with-media`, {
+      const res = await fetch(`${API_BASE_URL}/messages/send-with-media`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData,
       });
       if (res.ok) {
@@ -629,7 +629,7 @@ const Messages: React.FC = () => {
     if (!window.confirm(type === 'everyone' ? 'Delete for everyone?' : 'Delete for me?')) return;
     try {
       const token = getAuthToken();
-      const res   = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
+      const res = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ type }),
@@ -646,7 +646,7 @@ const Messages: React.FC = () => {
     if (!editingMessage || !editInput.trim()) return;
     try {
       const token = getAuthToken();
-      const res   = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
+      const res = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ newMessage: editInput }),
@@ -686,7 +686,7 @@ const Messages: React.FC = () => {
   // ─── Message bubble ──────────────────────────────────────────────────────────
 
   const MessageBubble = ({ msg }: { msg: Message }) => {
-    const isMe      = getSenderId(msg.sender_id) === doctorId;
+    const isMe = getSenderId(msg.sender_id) === doctorId;
     const isDeleted = msg.deleted;
     const isHovered = hoveredMessageId === msg._id;
 
@@ -737,16 +737,14 @@ const Messages: React.FC = () => {
           )}
 
           {/* Bubble */}
-          <div className={`shadow-sm transition-all ${
-            msg.message_type === 'image'
-              ? 'rounded-2xl p-1 bg-white border border-slate-100'
-              : `px-4 py-3 rounded-[1.5rem] ${
-                  isDeleted  ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
-                  msg._failed? 'bg-rose-50 text-rose-600 border border-rose-200' :
-                  isMe       ? 'bg-primary text-white rounded-br-none shadow-md shadow-primary/20'
-                             : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
-                }`
-          }`}>
+          <div className={`shadow-sm transition-all ${msg.message_type === 'image'
+            ? 'rounded-2xl p-1 bg-white border border-slate-100'
+            : `px-4 py-3 rounded-[1.5rem] ${isDeleted ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
+              msg._failed ? 'bg-rose-50 text-rose-600 border border-rose-200' :
+                isMe ? 'bg-primary text-white rounded-br-none shadow-md shadow-primary/20'
+                  : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
+            }`
+            }`}>
             {isDeleted && (
               <div className="flex items-center gap-2 text-sm">
                 <span className="material-symbols-outlined text-base">block</span>
@@ -765,7 +763,7 @@ const Messages: React.FC = () => {
                   <p className="text-[14px] font-medium leading-relaxed whitespace-pre-wrap">
                     {msg.message}
                     {msg.edited && <span className="text-[10px] opacity-60 ml-2 italic">(edited)</span>}
-                    {msg._temp  && <span className="text-[10px] opacity-60 ml-2">(sending…)</span>}
+                    {msg._temp && <span className="text-[10px] opacity-60 ml-2">(sending…)</span>}
                   </p>
                 )}
                 {msg.message_type === 'image' && (
