@@ -40,6 +40,7 @@ interface Message {
   createdAt?: string;
   edited?: boolean;
   deleted?: boolean;
+  deleted_for_me?: boolean;
   reactions?: Reaction[];
   reactions_count?: number;
   _temp?: boolean;
@@ -60,9 +61,6 @@ interface Conversation {
 const MESSAGE_TIMEOUT = 3000;
 const MAX_RETRY_COUNT = 2;
 const TYPING_TIMEOUT = 2000;
-
-// Phone: starts with 0 or +84, at least 9 digits
-const PHONE_REGEX = /^(\+84|0)[0-9]{8,10}$/;
 
 const isPhoneLike = (input: string) => {
   const stripped = input.trim().replace(/[\s\-\.]/g, '');
@@ -89,8 +87,10 @@ const ActionButton = ({
   onClick,
   color = 'text-slate-400',
   hoverColor = 'hover:text-primary',
+  title,
 }: any) => (
   <button
+    title={title}
     onClick={(e) => { e.stopPropagation(); onClick(); }}
     className={`p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-[#1a2c2f] transition-colors ${color} ${hoverColor}`}
   >
@@ -98,7 +98,7 @@ const ActionButton = ({
   </button>
 );
 
-// ─── Patient Avatar ────────────────────────────────────────────────────────────
+// ─── Avatar ────────────────────────────────────────────────────────────────────
 
 const getAvatarColor = (name: string) => {
   const palette = [
@@ -234,12 +234,34 @@ const Messages: React.FC = () => {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }, []);
 
-  const extractPreview = useCallback((m?: Message): string => {
-    if (!m) return '';
-    if (m.deleted) return '🚫 Message deleted';
-    if (m.message_type === 'image') return '📷 Photo';
-    if (m.message_type === 'file') return '📎 Attachment';
-    return (m as any).message || (m as any).content || '';
+  // ✅ QUAN TRỌNG: Hàm lấy preview text từ message
+  const getPreviewText = useCallback((msg?: Message): string => {
+    if (!msg) return '';
+    if (msg.deleted_for_me) return 'This message was deleted';
+    if (msg.deleted) return 'Message deleted';
+    if (msg.message_type === 'image') return '📷 Photo';
+    if (msg.message_type === 'file') return '📎 Attachment';
+    if (msg.message_type === 'text') {
+      const text = msg.message || '';
+      return text.length > 30 ? text.substring(0, 30) + '...' : text;
+    }
+    return '';
+  }, []);
+
+  // ✅ Hàm tạo preview message object cho conversation
+  const getPreviewMessage = useCallback((originalMsg?: Message): Message | undefined => {
+    if (!originalMsg) return undefined;
+
+    // Nếu message đã bị xóa cho me, tạo preview message mới
+    if (originalMsg.deleted_for_me) {
+      return {
+        ...originalMsg,
+        message: 'This message was deleted',
+        message_type: 'text',
+      } as Message;
+    }
+
+    return originalMsg;
   }, []);
 
   // ─── Phone search logic ──────────────────────────────────────────────────────
@@ -251,7 +273,6 @@ const Messages: React.FC = () => {
 
     if (!val.trim()) { setSearchStatus('idle'); return; }
 
-    // Only trigger phone search if input looks like a phone number
     if (isPhoneLike(val)) {
       setSearchStatus('searching');
 
@@ -274,7 +295,7 @@ const Messages: React.FC = () => {
         } catch {
           setSearchStatus('error');
         }
-      }, 600); // debounce 600ms
+      }, 600);
     } else {
       setSearchStatus('idle');
     }
@@ -293,14 +314,12 @@ const Messages: React.FC = () => {
       const data = await res.json();
       if (data.success && data.data) {
         const newConv: Conversation = data.data;
-        // Add to list if not already there
         setConversations(prev => {
           const exists = prev.find(c => c._id === newConv._id);
           if (exists) return prev;
           return [newConv, ...prev];
         });
         setSelectedConv(newConv);
-        // Clear search
         setSearchQuery('');
         setSearchResult(null);
         setSearchStatus('idle');
@@ -330,6 +349,24 @@ const Messages: React.FC = () => {
     ));
   }, [doctorId]);
 
+  // ✅ Cập nhật conversation trong state
+  const updateConversationLastMessage = useCallback((conversationId: string, message: Message) => {
+    setConversations(prev => prev.map(c => {
+      if (c._id !== conversationId) return c;
+
+      // Tạo preview message phù hợp
+      const previewMessage = getPreviewMessage(message);
+
+      return {
+        ...c,
+        last_message: previewMessage || message,
+        last_message_at: message.timestamp,
+      };
+    }).sort((a, b) =>
+      new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
+    ));
+  }, [getPreviewMessage]);
+
   const handleNewMessage = useCallback((rawMsg: any) => {
     if (!rawMsg) return;
     const convId = rawMsg.conversationId || rawMsg.conversation_id;
@@ -337,26 +374,26 @@ const Messages: React.FC = () => {
       pendingMessagesRef.current.delete(rawMsg._id);
       return;
     }
+
+    // Kiểm tra nếu message này bị deleted_for_me
+    const isDeletedForMe = rawMsg.deleted_for?.includes(doctorId);
+
     const msg: Message = {
       ...rawMsg,
       _id: rawMsg._id || `msg_${Date.now()}`,
       conversation_id: convId,
-      message: rawMsg.message || '',
-      message_type: rawMsg.message_type || 'text',
+      message: isDeletedForMe ? 'This message was deleted' : (rawMsg.message || ''),
+      message_type: isDeletedForMe ? 'text' : (rawMsg.message_type || 'text'),
       timestamp: rawMsg.timestamp || new Date().toISOString(),
-      reactions: rawMsg.reactions || [],
+      reactions: isDeletedForMe ? [] : (rawMsg.reactions || []),
+      deleted_for_me: isDeletedForMe,
     };
+
     const active = selectedConvRef.current;
-    setConversations(prev =>
-      prev.map(c => c._id === convId ? {
-        ...c,
-        last_message: msg,
-        last_message_at: msg.timestamp,
-        unread_count: active?._id === convId ? 0 : (c.unread_count || 0) + 1,
-      } : c).sort((a, b) =>
-        new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
-      )
-    );
+
+    // Cập nhật conversation list với preview đúng
+    updateConversationLastMessage(convId, msg);
+
     if (active?._id === convId) {
       setMessages(prev => {
         if (prev.some(m => m._id === msg._id)) return prev;
@@ -370,7 +407,54 @@ const Messages: React.FC = () => {
       markAsReadAPI(convId);
       debouncedScrollToBottom();
     }
-  }, [doctorId, markAsReadAPI, debouncedScrollToBottom]);
+  }, [doctorId, markAsReadAPI, debouncedScrollToBottom, updateConversationLastMessage]);
+
+  // ─── Fetch messages ──────────────────────────────────────────────────────────
+
+  const fetchMessages = useCallback(async (conversationId: string) => {
+    setMessagesLoading(true);
+    try {
+      const token = getAuthToken();
+      const res = await fetch(
+        `${API_BASE_URL}/messages/conversations/${conversationId}/messages`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          // Transform messages để xử lý deleted_for_me
+          const transformedMessages = (data.data || []).map((msg: any) => {
+            const isDeletedForMe = msg.deleted_for?.includes(doctorId);
+            if (isDeletedForMe && !msg.deleted) {
+              return {
+                ...msg,
+                deleted_for_me: true,
+                message: 'This message was deleted',
+                message_type: 'text',
+                reactions: [],
+              };
+            }
+            return msg;
+          });
+          setMessages(transformedMessages);
+
+          // ✅ Cập nhật conversation preview với message cuối cùng
+          if (transformedMessages.length > 0) {
+            const lastMsg = transformedMessages[transformedMessages.length - 1];
+            updateConversationLastMessage(conversationId, lastMsg);
+          }
+
+          markAsReadAPI(conversationId);
+          if (socketRef.current?.connected) {
+            socketRef.current.emit('join_conversation', conversationId);
+            socketRef.current.emit('messages_read', { conversationId });
+          }
+          debouncedScrollToBottom();
+        }
+      }
+    } catch (e) { console.error(e); }
+    finally { setMessagesLoading(false); }
+  }, [doctorId, markAsReadAPI, debouncedScrollToBottom, updateConversationLastMessage]);
 
   // ─── Socket connect ──────────────────────────────────────────────────────────
 
@@ -419,14 +503,69 @@ const Messages: React.FC = () => {
     socket.on('connect_error', () => setIsSocketConnected(false));
 
     socket.on('new_message', handleNewMessage);
+
     socket.on('message_edited', (data: any) => {
-      if (selectedConvRef.current?._id === data.conversationId)
+      if (selectedConvRef.current?._id === data.conversationId) {
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, ...data.message } : m));
+        // Cập nhật conversation preview nếu message được edit là last message
+        if (data.message && selectedConvRef.current?.last_message?._id === data.messageId) {
+          updateConversationLastMessage(data.conversationId, data.message);
+        }
+      }
     });
+
     socket.on('message_deleted', (data: any) => {
-      if (selectedConvRef.current?._id === data.conversationId)
-        setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] } : m));
+      if (selectedConvRef.current?._id !== data.conversationId) return;
+
+      if (data.type === 'everyone') {
+        const deletedMsg = data.message;
+        const messageId = deletedMsg?._id || data.messageId;
+        setMessages(prev => prev.map(m => {
+          if (m._id !== messageId) return m;
+          return deletedMsg
+            ? { ...m, ...deletedMsg }
+            : { ...m, deleted: true, message: 'This message was deleted', reactions: [] };
+        }));
+
+        // ✅ Cập nhật conversation preview khi người khác xóa
+        if (selectedConvRef.current?.last_message?._id === messageId) {
+          const deletedPreview = {
+            _id: messageId,
+            message: 'This message was deleted',
+            message_type: 'text',
+            deleted: true,
+            timestamp: new Date().toISOString(),
+          } as Message;
+          updateConversationLastMessage(data.conversationId, deletedPreview);
+        }
+      } else if (data.type === 'me') {
+        // Xử lý delete for me từ socket
+        const messageId = data.messageId;
+        setMessages(prev => prev.map(m => {
+          if (m._id !== messageId) return m;
+          return {
+            ...m,
+            deleted_for_me: true,
+            message: 'This message was deleted',
+            message_type: 'text',
+            reactions: [],
+          };
+        }));
+
+        // ✅ Cập nhật conversation preview
+        if (selectedConvRef.current?.last_message?._id === messageId) {
+          const deletedPreview = {
+            _id: messageId,
+            message: 'This message was deleted',
+            message_type: 'text',
+            deleted_for_me: true,
+            timestamp: new Date().toISOString(),
+          } as Message;
+          updateConversationLastMessage(data.conversationId, deletedPreview);
+        }
+      }
     });
+
     socket.on('reaction_added', (data: any) => {
       if (selectedConvRef.current?._id === data.conversationId)
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
@@ -437,19 +576,32 @@ const Messages: React.FC = () => {
     });
     socket.on('user_typing', handleTypingSocket);
     socket.on('messages_read_by_user', handleMessagesRead);
+
     socket.on('message_sent_success', (res: any) => {
       if (res.messageId && res.tempId) {
         setMessages(prev => prev.map(m => m._id === res.tempId ? { ...m, _id: res.messageId, _temp: false } : m));
         pendingMessagesRef.current.add(res.messageId);
       }
     });
+
     socket.on('message_error', (err: any) => {
       if (err.tempId) setMessages(prev => prev.map(m => m._id === err.tempId ? { ...m, _failed: true } : m));
     });
-    return socket;
-  }, [handleTypingSocket, handleMessagesRead, handleNewMessage, processQueue]);
 
-  // ─── Fetch ───────────────────────────────────────────────────────────────────
+    socket.on('delete_message_success', (res: any) => {
+      console.debug('[socket] delete_message_success', res);
+    });
+    socket.on('delete_message_error', (err: any) => {
+      console.error('[socket] delete_message_error', err);
+      if (err.messageId && selectedConvRef.current) {
+        fetchMessages(selectedConvRef.current._id);
+      }
+    });
+
+    return socket;
+  }, [handleTypingSocket, handleMessagesRead, handleNewMessage, processQueue, fetchMessages, doctorId, updateConversationLastMessage]);
+
+  // ─── Fetch conversations ──────────────────────────────────────────────────────
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -459,40 +611,31 @@ const Messages: React.FC = () => {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success)
+        if (data.success) {
+          // Transform conversations để xử lý preview đúng
+          const transformedConvs = (data.data || []).map((conv: Conversation) => {
+            if (conv.last_message && conv.last_message.deleted_for_me) {
+              return {
+                ...conv,
+                last_message: {
+                  ...conv.last_message,
+                  message: 'This message was deleted',
+                  message_type: 'text',
+                } as Message,
+              };
+            }
+            return conv;
+          });
           setConversations(
-            (data.data || []).sort((a: any, b: any) =>
+            transformedConvs.sort((a: any, b: any) =>
               new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
             )
           );
+        }
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
-
-  const fetchMessages = useCallback(async (conversationId: string) => {
-    setMessagesLoading(true);
-    try {
-      const token = getAuthToken();
-      const res = await fetch(
-        `${API_BASE_URL}/messages/conversations/${conversationId}/messages`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setMessages(data.data || []);
-          markAsReadAPI(conversationId);
-          if (socketRef.current?.connected) {
-            socketRef.current.emit('join_conversation', conversationId);
-            socketRef.current.emit('messages_read', { conversationId });
-          }
-          debouncedScrollToBottom();
-        }
-      }
-    } catch (e) { console.error(e); }
-    finally { setMessagesLoading(false); }
-  }, [markAsReadAPI, debouncedScrollToBottom]);
 
   // ─── Init ────────────────────────────────────────────────────────────────────
 
@@ -588,7 +731,7 @@ const Messages: React.FC = () => {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConv || sending) return;
-    if (file.size > 10 * 1024 * 1024) { alert('File is too large (Max 10MB)'); return; }
+    if (file.size > 10 * 1024 * 1024) { alert('File is too large (max 10 MB)'); return; }
     const isImage = file.type.startsWith('image/');
     const tempId = `temp_media_${Date.now()}`;
     const blobUrl = URL.createObjectURL(file);
@@ -623,36 +766,152 @@ const Messages: React.FC = () => {
     finally { setSending(false); if (fileInputRef.current) fileInputRef.current.value = ''; URL.revokeObjectURL(blobUrl); }
   };
 
-  // ─── Message actions ─────────────────────────────────────────────────────────
-
   const handleDeleteMessage = async (messageId: string, type: 'me' | 'everyone') => {
-    if (!window.confirm(type === 'everyone' ? 'Delete for everyone?' : 'Delete for me?')) return;
+    const confirmText = type === 'everyone'
+      ? 'Delete for everyone?'
+      : 'Delete for me?';
+    if (!window.confirm(confirmText)) return;
+
+    const conv = selectedConvRef.current;
+    if (!conv) return;
+
+    const snapshotMessages = [...messages];
+    const snapshotConversations = [...conversations];
+
+    // Tìm message đang bị xóa
+    const targetMessage = messages.find(m => m._id === messageId);
+    const isLastMessage = conv.last_message?._id === messageId;
+
+    if (type === 'everyone') {
+      setMessages(prev => prev.map(m =>
+        m._id === messageId
+          ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] }
+          : m
+      ));
+    } else {
+      setMessages(prev => prev.map(m =>
+        m._id === messageId
+          ? {
+            ...m,
+            deleted_for_me: true,
+            deleted: false,
+            message: 'This message was deleted',
+            message_type: 'text',
+            reactions: [],
+            media_url: undefined,
+            media_name: undefined,
+          }
+          : m
+      ));
+    }
+
+    // ✅ Cập nhật conversation preview nếu message bị xóa là last message
+    if (isLastMessage) {
+      const deletedPreview = {
+        _id: messageId,
+        message: 'This message was deleted',
+        message_type: 'text',
+        deleted: type === 'everyone',
+        deleted_for_me: type === 'me',
+        timestamp: targetMessage?.timestamp || new Date().toISOString(),
+      } as Message;
+      updateConversationLastMessage(conv._id, deletedPreview);
+    }
+
+    // Socket delete attempt
+    if (socketRef.current?.connected) {
+      try {
+        await deleteViaSocket(messageId, conv._id, type);
+        return;
+      } catch (err) {
+        console.warn('[socket] delete failed, falling back to REST:', err);
+        setMessages(snapshotMessages);
+        setConversations(snapshotConversations);
+      }
+    }
+
+    // REST fallback
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/messages/${messageId}`, {
+      const res = await fetch(`${API_BASE_URL}/messages/${messageId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ type }),
       });
-      if (res.ok) {
-        type === 'everyone'
-          ? setMessages(prev => prev.map(m => m._id === messageId ? { ...m, deleted: true, message: 'This message was deleted' } : m))
-          : setMessages(prev => prev.filter(m => m._id !== messageId));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // Success - giữ nguyên optimistic update
+      if (type === 'everyone') {
+        setMessages(prev => prev.map(m =>
+          m._id === messageId
+            ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] }
+            : m
+        ));
+      } else {
+        setMessages(prev => prev.map(m =>
+          m._id === messageId
+            ? {
+              ...m,
+              deleted_for_me: true,
+              deleted: false,
+              message: 'This message was deleted',
+              message_type: 'text',
+              reactions: [],
+              media_url: undefined,
+              media_name: undefined,
+            }
+            : m
+        ));
       }
-    } catch { alert('Failed to delete message'); }
+    } catch (restErr) {
+      console.error('[REST] delete failed:', restErr);
+      alert('Failed to delete message. Please try again.');
+      setMessages(snapshotMessages);
+      setConversations(snapshotConversations);
+    }
   };
+
+  const deleteViaSocket = (
+    messageId: string,
+    conversationId: string,
+    type: 'me' | 'everyone',
+  ): Promise<any> =>
+    new Promise((resolve, reject) => {
+      if (!socketRef.current?.connected) {
+        reject(new Error('Socket not connected'));
+        return;
+      }
+      socketRef.current
+        .timeout(5000)
+        .emit(
+          'delete_message',
+          { messageId, conversationId, type },
+          (err: any, res: any) => {
+            if (err || !res?.success) {
+              reject(new Error(err?.message || res?.error || 'Delete failed'));
+            } else {
+              resolve(res);
+            }
+          },
+        );
+    });
 
   const handleEditMessage = async () => {
     if (!editingMessage || !editInput.trim()) return;
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/messages/${editingMessage._id}/edit`, {
+      const res = await fetch(`${API_BASE_URL}/messages/${editingMessage._id}/edit`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ newMessage: editInput }),
       });
       if (res.ok) {
-        setMessages(prev => prev.map(m => m._id === editingMessage._id ? { ...m, message: editInput, edited: true } : m));
+        const updatedMsg = { ...editingMessage, message: editInput, edited: true };
+        setMessages(prev => prev.map(m => m._id === editingMessage._id ? updatedMsg : m));
+        // Cập nhật conversation preview nếu message được edit là last message
+        if (selectedConvRef.current?.last_message?._id === editingMessage._id) {
+          updateConversationLastMessage(selectedConvRef.current._id, updatedMsg);
+        }
         setEditingMessage(null);
         setEditInput('');
       }
@@ -675,7 +934,7 @@ const Messages: React.FC = () => {
     }));
     try {
       const token = getAuthToken();
-      await fetch(`${API_BASE_URL}/messages/messages/${messageId}/react`, {
+      await fetch(`${API_BASE_URL}/messages/${messageId}/react`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reaction: emoji }),
@@ -687,7 +946,8 @@ const Messages: React.FC = () => {
 
   const MessageBubble = ({ msg }: { msg: Message }) => {
     const isMe = getSenderId(msg.sender_id) === doctorId;
-    const isDeleted = msg.deleted;
+    const isDeletedForMe = msg.deleted_for_me === true;
+    const isDeleted = msg.deleted === true || isDeletedForMe;
     const isHovered = hoveredMessageId === msg._id;
 
     const grouped: Record<string, { count: number; byMe: boolean }> = {};
@@ -706,21 +966,39 @@ const Messages: React.FC = () => {
       >
         <div className={`max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'} relative`}>
 
-          {/* Action menu */}
+          {/* Action menu - chỉ hiển thị nếu chưa bị xóa */}
           {!isDeleted && !msg._temp && (
             <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} z-10 bg-white dark:bg-[#102023] shadow-lg rounded-full px-2 py-1 flex gap-1 transition-opacity border border-slate-100 dark:border-[#1e3438]
               ${isHovered || reactingToMessageId === msg._id ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
             >
-              <ActionButton icon="add_reaction" onClick={() => setReactingToMessageId(msg._id)} />
+              <ActionButton icon="add_reaction" onClick={() => setReactingToMessageId(msg._id)} title="React" />
               {isMe && msg.message_type === 'text' && !msg._failed && (
-                <ActionButton icon="edit" onClick={() => { setEditingMessage(msg); setEditInput(msg.message); }} />
+                <ActionButton
+                  icon="edit"
+                  onClick={() => { setEditingMessage(msg); setEditInput(msg.message); }}
+                  title="Edit message"
+                />
               )}
-              <ActionButton
-                icon="delete"
-                onClick={() => handleDeleteMessage(msg._id, isMe ? 'everyone' : 'me')}
-                color="text-rose-400"
-                hoverColor="hover:text-rose-600 hover:bg-rose-50"
-              />
+              {/* Delete for everyone — only sender can do this */}
+              {isMe && (
+                <ActionButton
+                  icon="delete_sweep"
+                  onClick={() => handleDeleteMessage(msg._id, 'everyone')}
+                  color="text-rose-400"
+                  hoverColor="hover:text-rose-600 hover:bg-rose-50"
+                  title={msg.read ? 'Delete for everyone (already seen)' : 'Unsend message'}
+                />
+              )}
+              {/* Delete for me — available for all messages that are not already deleted for me */}
+              {!isDeletedForMe && (
+                <ActionButton
+                  icon="delete"
+                  onClick={() => handleDeleteMessage(msg._id, 'me')}
+                  color="text-rose-400"
+                  hoverColor="hover:text-rose-600 hover:bg-rose-50"
+                  title="Remove from my view"
+                />
+              )}
             </div>
           )}
 
@@ -737,7 +1015,7 @@ const Messages: React.FC = () => {
           )}
 
           {/* Bubble */}
-          <div className={`shadow-sm transition-all ${msg.message_type === 'image'
+          <div className={`shadow-sm transition-all ${msg.message_type === 'image' && !isDeleted
             ? 'rounded-2xl p-1 bg-white border border-slate-100'
             : `px-4 py-3 rounded-[1.5rem] ${isDeleted ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
               msg._failed ? 'bg-rose-50 text-rose-600 border border-rose-200' :
@@ -803,7 +1081,7 @@ const Messages: React.FC = () => {
             )}
           </div>
 
-          {/* Reactions */}
+          {/* Reactions - chỉ hiển thị nếu chưa bị xóa */}
           {!isDeleted && !msg._failed && Object.keys(grouped).length > 0 && (
             <div className={`flex gap-1 mt-1 flex-wrap px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
               {Object.entries(grouped).map(([emoji, d]) => (
@@ -816,7 +1094,7 @@ const Messages: React.FC = () => {
             </div>
           )}
 
-          {/* Timestamp */}
+          {/* Timestamp + read status */}
           <div className="mt-1 text-[10px] font-semibold opacity-50 flex items-center gap-1 px-1">
             {safeFormatTime(msg.timestamp)}
             {isMe && !isDeleted && !msg._failed && (
@@ -878,7 +1156,7 @@ const Messages: React.FC = () => {
             <input
               value={searchQuery}
               onChange={handleSearchChange}
-              placeholder="Search name or phone number…"
+              placeholder="Search by name or phone number…"
               className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-slate-50 dark:bg-[#1a2c2f] border border-slate-100 dark:border-[#224449] text-sm text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
             />
             {searchQuery && (
@@ -891,7 +1169,7 @@ const Messages: React.FC = () => {
             )}
           </div>
 
-          {/* ── Phone search results ──────────────────────────────────────── */}
+          {/* Phone search results */}
           {searchQuery && isPhoneLike(searchQuery) && (
             <div className="mt-2 rounded-xl border border-slate-100 dark:border-[#224449] bg-white dark:bg-[#1a2c2f] overflow-hidden shadow-lg">
               {searchStatus === 'searching' && (
@@ -1002,7 +1280,7 @@ const Messages: React.FC = () => {
                           </span>
                         </div>
                         <p className={`text-xs truncate mt-0.5 ${isActive ? 'text-white/70' : 'text-slate-400'}`}>
-                          {extractPreview(conv.last_message) || 'No messages yet'}
+                          {getPreviewText(conv.last_message) || 'No messages yet'}
                         </p>
                       </div>
                       {conv.unread_count > 0 && !isActive && (
@@ -1052,7 +1330,7 @@ const Messages: React.FC = () => {
               )}
             </header>
 
-            {/* Messages */}
+            {/* Messages list */}
             <div className="flex-1 overflow-y-auto px-5 py-5 bg-slate-50/40 dark:bg-[#0b1619]/60 scroll-smooth">
               {messagesLoading ? (
                 <div className="h-full flex items-center justify-center">

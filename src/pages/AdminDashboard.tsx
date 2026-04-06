@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Dashboard,
   People,
@@ -29,6 +30,8 @@ import {
   Close,
   Menu as MenuIcon
 } from '@mui/icons-material';
+
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:3000';
 
 // --- Interfaces (Kept intact) ---
 interface SystemStats {
@@ -83,7 +86,7 @@ interface Doctor extends User {
     consultation_fee: number;
     isAvailable: boolean;
   };
-  specialty?: string;
+  specialty?: string | { _id: string; name: string };
   licenseNumber?: string;
   yearsOfExperience?: number;
   consultationFee?: number;
@@ -113,6 +116,7 @@ interface Appointment {
   };
   specialty_id: {
     name: string;
+    _id?: string;
   };
   appointment_date: string;
   time_slot: string;
@@ -161,6 +165,7 @@ interface DoctorRegistrationRequest {
   phoneNumber: string;
   specialty_id: {
     name: string;
+    _id?: string;
   };
   license_number: string;
   years_of_experience: number;
@@ -370,7 +375,8 @@ const AdminDashboard: React.FC = () => {
   const [success, setSuccess] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
-  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null); // Kept for logic compatibility
+  const navigate = useNavigate();
+  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null); 
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false); // Tailwind dropdown
   
   // Specialties Dialog State
@@ -378,27 +384,23 @@ const AdminDashboard: React.FC = () => {
   const [currentSpecialty, setCurrentSpecialty] = useState<Partial<Specialty>>({});
 
   // --- Logic & Effects (Kept intact) ---
-  useEffect(() => {
-    fetchSystemData();
-  }, [activeTab]);
-
-  const fetchSystemData = async () => {
+  const fetchSystemData = useCallback(async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('adminToken');
       
       const endpoints: { [key: string]: string } = {
-        'dashboard': 'http://localhost:3000/api/admin/dashboard',
-        'users': 'http://localhost:3000/api/admin/users',
-        'doctors': 'http://localhost:3000/api/admin/doctors',
-        'patients': 'http://localhost:3000/api/admin/patients', 
-        'appointments': 'http://localhost:3000/api/admin/appointments',
-        'medical-records': 'http://localhost:3000/api/admin/medical-records',
-        'unlock-requests': 'http://localhost:3000/api/admin/unlock-requests',
-        'doctor-registrations': 'http://localhost:3000/api/admin/doctor-registrations',
-        'system-logs': 'http://localhost:3000/api/admin/system-logs',
-        'specialties': 'http://localhost:3000/api/specialties',
-        'drugs': 'http://localhost:3000/api/admin/drugs'
+        'dashboard': `${API_BASE}/api/admin/dashboard`,
+        'users': `${API_BASE}/api/admin/users`,
+        'doctors': `${API_BASE}/api/admin/doctors`,
+        'patients': `${API_BASE}/api/admin/patients`, 
+        'appointments': `${API_BASE}/api/admin/appointments`,
+        'medical-records': `${API_BASE}/api/admin/medical-records`,
+        'unlock-requests': `${API_BASE}/api/admin/unlock-requests`,
+        'doctor-registrations': `${API_BASE}/api/admin/doctor-registrations`,
+        'system-logs': `${API_BASE}/api/admin/system-logs`,
+        'specialties': `${API_BASE}/api/specialties`,
+        'drugs': `${API_BASE}/api/admin/drugs`
       };
 
       const endpoint = endpoints[activeTab] || endpoints['dashboard'];
@@ -411,23 +413,26 @@ const AdminDashboard: React.FC = () => {
       });
 
       if (activeTab === 'drugs') {
-         fetch('http://localhost:3000/api/admin/drug-categories', {
-            headers: { 'Authorization': `Bearer ${token}` }
-         })
-         .then(res => res.json())
-         .then(data => {
-            if (data.success) {
-              setDrugCategories(data.data);
-            } else {
-              setDrugCategories([
-                  { _id: '1', name: 'Antibiotics' },
-                  { _id: '2', name: 'Analgesics' },
-                  { _id: '3', name: 'Antipyretics' },
-                  { _id: '4', name: 'Antiseptics' },
-                  { _id: '5', name: 'Vitamins' }
-              ]);
-            }
-         }).catch(e => console.error("Error fetching categories", e));
+         try {
+           const catRes = await fetch(`${API_BASE}/api/admin/drug-categories`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+           });
+           const catData = await catRes.json();
+           if (catData.success) {
+             setDrugCategories(catData.data);
+           } else {
+             throw new Error('Failed to fetch categories');
+           }
+         } catch (e) {
+            console.error("Error fetching categories", e);
+            setDrugCategories([
+                { _id: '1', name: 'Antibiotics' },
+                { _id: '2', name: 'Analgesics' },
+                { _id: '3', name: 'Antipyretics' },
+                { _id: '4', name: 'Antiseptics' },
+                { _id: '5', name: 'Vitamins' }
+            ]);
+         }
       }
 
       if (response.status === 401) {
@@ -498,20 +503,12 @@ const AdminDashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const testAPIEndpoints = async () => {
-    // Kept intact for compatibility
-    const token = localStorage.getItem('adminToken');
-    const endpoints = [
-      'http://localhost:3000/api/admin/doctors',
-    ];
-    // ... loop
-  };
+  }, [activeTab]);
 
   useEffect(() => {
-    testAPIEndpoints();
-  }, []);
+    fetchSystemData();
+  }, [fetchSystemData]);
+
 
   // --- Handlers (Kept intact) ---
   const handleOpenDrugDialog = (drug?: Drug) => {
@@ -547,8 +544,8 @@ const AdminDashboard: React.FC = () => {
         const token = localStorage.getItem('adminToken');
         const isEdit = !!currentDrug._id;
         const url = isEdit 
-            ? `http://localhost:3000/api/admin/drugs/${currentDrug._id}`
-            : 'http://localhost:3000/api/admin/drugs';
+            ? `${API_BASE}/api/admin/drugs/${currentDrug._id}`
+            : `${API_BASE}/api/admin/drugs`;
         const method = isEdit ? 'PUT' : 'POST';
 
         const response = await fetch(url, {
@@ -577,7 +574,7 @@ const AdminDashboard: React.FC = () => {
     if(!window.confirm('Are you sure you want to delete this drug record?')) return;
     try {
         const token = localStorage.getItem('adminToken');
-        const response = await fetch(`http://localhost:3000/api/admin/drugs/${id}`, {
+        const response = await fetch(`${API_BASE}/api/admin/drugs/${id}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -613,8 +610,8 @@ const AdminDashboard: React.FC = () => {
       const token = localStorage.getItem('adminToken');
       const isEdit = !!currentSpecialty._id;
       const url = isEdit 
-        ? `http://localhost:3000/api/specialties/${currentSpecialty._id}`
-        : 'http://localhost:3000/api/specialties/create';
+        ? `${API_BASE}/api/specialties/${currentSpecialty._id}`
+        : `${API_BASE}/api/specialties/create`;
       const method = isEdit ? 'PUT' : 'POST';
 
       const response = await fetch(url, {
@@ -643,7 +640,7 @@ const AdminDashboard: React.FC = () => {
     if(!window.confirm('Are you sure you want to delete this specialty?')) return;
     try {
         const token = localStorage.getItem('adminToken');
-        const response = await fetch(`http://localhost:3000/api/specialties/${id}`, {
+        const response = await fetch(`${API_BASE}/api/specialties/${id}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -662,7 +659,7 @@ const AdminDashboard: React.FC = () => {
   const handleLockUser = async (userId: string) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/users/${userId}/lock`, {
+      const response = await fetch(`${API_BASE}/api/admin/users/${userId}/lock`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -692,7 +689,7 @@ const AdminDashboard: React.FC = () => {
   const handleUnlockUser = async (userId: string) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/users/${userId}/unlock`, {
+      const response = await fetch(`${API_BASE}/api/admin/users/${userId}/unlock`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -721,7 +718,7 @@ const AdminDashboard: React.FC = () => {
   const handleApproveRegistration = async (requestId: string) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/doctor-registrations/${requestId}/approve`, {
+      const response = await fetch(`${API_BASE}/api/admin/doctor-registrations/${requestId}/approve`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -748,7 +745,7 @@ const AdminDashboard: React.FC = () => {
   const handleApproveUnlockRequest = async (requestId: string) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/unlock-requests/${requestId}/approve`, {
+      const response = await fetch(`${API_BASE}/api/admin/unlock-requests/${requestId}/approve`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -775,7 +772,7 @@ const AdminDashboard: React.FC = () => {
   const handleRejectRegistration = async (requestId: string) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/doctor-registrations/${requestId}/reject`, {
+      const response = await fetch(`${API_BASE}/api/admin/doctor-registrations/${requestId}/reject`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -799,7 +796,7 @@ const AdminDashboard: React.FC = () => {
   const handleRejectUnlockRequest = async (requestId: string) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/unlock-requests/${requestId}/reject`, {
+      const response = await fetch(`${API_BASE}/api/admin/unlock-requests/${requestId}/reject`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -823,7 +820,7 @@ const AdminDashboard: React.FC = () => {
   const handleUpdateUserStatus = async (userId: string, isActive: boolean) => {
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await fetch(`http://localhost:3000/api/admin/users/${userId}/status`, {
+      const response = await fetch(`${API_BASE}/api/admin/users/${userId}/status`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -853,7 +850,7 @@ const AdminDashboard: React.FC = () => {
   const handleLogout = () => {
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
-    window.location.href = '/admin-login';
+    navigate('/admin-login');
   };
 
   // --- Helpers ---
@@ -926,11 +923,18 @@ const AdminDashboard: React.FC = () => {
     user.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const filteredDoctors = doctors.filter(doctor =>
-    doctor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    doctor.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    doctor.specialty?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredDoctors = doctors.filter(doctor => {
+    const searchLow = searchTerm.toLowerCase();
+    const specialtyName = typeof doctor.specialty === 'object' && doctor.specialty !== null
+      ? (doctor.specialty as any).name
+      : doctor.specialty || '';
+    
+    return (
+      doctor.name.toLowerCase().includes(searchLow) ||
+      doctor.email.toLowerCase().includes(searchLow) ||
+      specialtyName.toLowerCase().includes(searchLow)
+    );
+  });
 
   const filteredDrugs = drugs.filter(drug => 
       drug.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1141,7 +1145,7 @@ const AdminDashboard: React.FC = () => {
                         <div>
                           <p className="font-bold text-slate-800">{user.name}</p>
                           <p className="text-xs text-slate-500 font-medium">{user.email}</p>
-                          {user.phoneNumber && <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5"><Phone style={{fontSize: 10}}/> {user.phoneNumber}</p>}
+                          {user?.phoneNumber && <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5"><Phone style={{fontSize: 10}}/> {user.phoneNumber}</p>}
                         </div>
                       </div>
                     </td>
@@ -1229,8 +1233,8 @@ const AdminDashboard: React.FC = () => {
                         : doc.specialty || '-'}
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-500 font-mono tracking-wide">{doc.licenseNumber || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{doc.yearsOfExperience || 0} yrs</td>
-                    <td className="px-6 py-4 text-sm font-bold text-slate-800">${doc.consultationFee || 0}</td>
+                    <td className="px-6 py-4 text-sm text-slate-700">{doc?.yearsOfExperience || 0} yrs</td>
+                    <td className="px-6 py-4 text-sm font-bold text-slate-800">${doc?.consultationFee || 0}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-1 items-start">
                          <Badge colorClass={getStatusStyles(doc.status)}>
@@ -1324,8 +1328,8 @@ const AdminDashboard: React.FC = () => {
                           <span className="font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded-md">{p.medicalRecordCount}</span>
                        </td>
                        <td className="px-6 py-4 text-xs">
-                          <p className="text-slate-700 font-medium">Last: {p.lastAppointment ? new Date(p.lastAppointment).toLocaleDateString() : 'None'}</p>
-                          <p className="text-slate-400 mt-0.5">Login: {p.lastLogin ? new Date(p.lastLogin).toLocaleDateString() : 'Never'}</p>
+                          <p className="text-slate-700 font-medium">Last: {p?.lastAppointment ? new Date(p.lastAppointment).toLocaleDateString() : 'None'}</p>
+                          <p className="text-slate-400 mt-0.5">Login: {p?.lastLogin ? new Date(p.lastLogin).toLocaleDateString() : 'Never'}</p>
                        </td>
                        <td className="px-6 py-4">
                           <Badge colorClass={p.isActive ? getStatusStyles('active') : getStatusStyles('inactive')}>{p.isActive ? 'Active' : 'Inactive'}</Badge>
@@ -1374,8 +1378,8 @@ const AdminDashboard: React.FC = () => {
           </td>
           <td className="px-6 py-4 text-sm font-medium text-slate-700">{appt.specialty_id.name}</td>
           <td className="px-6 py-4 text-sm">
-             <p className="font-semibold text-slate-800">{new Date(appt.appointment_date).toLocaleDateString()}</p>
-             <p className="text-blue-600 text-xs font-bold bg-blue-50 inline-block px-1 rounded mt-0.5">{appt.time_slot}</p>
+             <p className="font-semibold text-slate-800">{appt?.appointment_date ? new Date(appt.appointment_date).toLocaleDateString() : 'N/A'}</p>
+             <p className="text-blue-600 text-xs font-bold bg-blue-50 inline-block px-1 rounded mt-0.5">{appt?.time_slot || 'N/A'}</p>
           </td>
           <td className="px-6 py-4">
              <Badge colorClass={getStatusStyles(appt.status)}>{appt.status}</Badge>
@@ -1411,8 +1415,8 @@ const AdminDashboard: React.FC = () => {
             <td className="px-6 py-4 text-sm text-slate-600">{req.doctor_id.phoneNumber || '-'}</td>
             <td className="px-6 py-4 text-sm text-slate-600 max-w-xs truncate bg-slate-50 p-2 rounded border border-slate-100">{req.request_reason}</td>
             <td className="px-6 py-4 text-xs text-slate-500">
-               <p><span className="font-semibold">Locked:</span> {req.doctor_id.lockedAt ? new Date(req.doctor_id.lockedAt).toLocaleDateString() : 'N/A'}</p>
-               <p><span className="font-semibold">Attempts:</span> {req.doctor_id.loginAttempts}</p>
+               <p><span className="font-semibold">Locked:</span> {req?.doctor_id?.lockedAt ? new Date(req.doctor_id.lockedAt).toLocaleDateString() : 'N/A'}</p>
+               <p><span className="font-semibold">Attempts:</span> {req?.doctor_id?.loginAttempts || 0}</p>
             </td>
             <td className="px-6 py-4">
                <Badge colorClass={getStatusStyles(req.status)}>
@@ -1443,10 +1447,10 @@ const AdminDashboard: React.FC = () => {
             <td className="px-6 py-4 text-sm font-medium">{req.specialty_id.name}</td>
             <td className="px-6 py-4 text-sm font-mono text-slate-600">{req.license_number}</td>
             <td className="px-6 py-4 text-sm">
-               <p>{req.years_of_experience} yrs</p>
-               <p className="font-bold text-slate-800">${req.consultation_fee}</p>
+               <p>{req?.years_of_experience || 0} yrs</p>
+               <p className="font-bold text-slate-800">${req?.consultation_fee || 0}</p>
             </td>
-            <td className="px-6 py-4 text-sm text-slate-500">{new Date(req.submitted_at).toLocaleDateString()}</td>
+            <td className="px-6 py-4 text-sm text-slate-500">{req?.submitted_at ? new Date(req.submitted_at).toLocaleDateString() : 'N/A'}</td>
             <td className="px-6 py-4"><Badge colorClass={getStatusStyles(req.status)}>{req.status}</Badge></td>
             <td className="px-6 py-4">
                {req.status === 'pending' && (
