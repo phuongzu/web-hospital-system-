@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 import EmojiPicker, { EmojiClickData } from 'emoji-picker-react';
 import {
   API_BASE_URL,
@@ -8,6 +9,7 @@ import {
   getDoctorId,
   getAvatarUrl,
   redirectToLoginPage,
+  isValidObjectId,
 } from '../utils/api';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -18,10 +20,11 @@ interface User {
   avatar?: string;
   role?: string;
   phoneNumber?: string;
+  email?: string;
 }
 
 interface Reaction {
-  user_id: User | string | any;
+  user_id: User | string;
   emoji: string;
   createdAt?: string;
 }
@@ -29,8 +32,8 @@ interface Reaction {
 interface Message {
   _id: string;
   conversation_id?: string;
-  sender_id: User | string | any;
-  receiver_id: User | string | any;
+  sender_id: User | string;
+  receiver_id: User | string;
   message: string;
   message_type: 'text' | 'image' | 'file';
   media_url?: string;
@@ -58,12 +61,13 @@ interface Conversation {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const MESSAGE_TIMEOUT = 3000;
 const MAX_RETRY_COUNT = 2;
 const TYPING_TIMEOUT = 2000;
+const SOCKET_RECONNECTION_ATTEMPTS = 5;
+const SOCKET_RECONNECTION_DELAY = 1000;
 
 const isPhoneLike = (input: string) => {
-  const stripped = input.trim().replace(/[\s\-\.]/g, '');
+  const stripped = input.trim().replace(/[\s.-]/g, '');
   return /^(\+84|0)[0-9]{7,}$/.test(stripped) || /^[0-9]{9,11}$/.test(stripped);
 };
 
@@ -80,26 +84,6 @@ const getMediaUrl = (url?: string) => {
   return `${API_BASE_URL}${url}`;
 };
 
-// ─── Action button ─────────────────────────────────────────────────────────────
-
-const ActionButton = ({
-  icon,
-  onClick,
-  color = 'text-slate-400',
-  hoverColor = 'hover:text-primary',
-  title,
-}: any) => (
-  <button
-    title={title}
-    onClick={(e) => { e.stopPropagation(); onClick(); }}
-    className={`p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-[#1a2c2f] transition-colors ${color} ${hoverColor}`}
-  >
-    <span className="material-symbols-outlined text-[18px]">{icon}</span>
-  </button>
-);
-
-// ─── Avatar ────────────────────────────────────────────────────────────────────
-
 const getAvatarColor = (name: string) => {
   const palette = [
     'from-sky-100 to-sky-200 text-sky-700',
@@ -114,9 +98,19 @@ const getAvatarColor = (name: string) => {
   return palette[Math.abs(hash) % palette.length];
 };
 
-const Avatar: React.FC<{ user?: User | null; size?: 'sm' | 'md' | 'lg' }> = ({
-  user, size = 'md',
-}) => {
+// ─── Components ─────────────────────────────────────────────────────────────────
+
+const ActionButton = ({ icon, onClick, color = 'text-slate-400', hoverColor = 'hover:text-primary', title }: any) => (
+  <button
+    title={title}
+    onClick={(e) => { e.stopPropagation(); onClick(); }}
+    className={`p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-[#1a2c2f] transition-colors ${color} ${hoverColor}`}
+  >
+    <span className="material-symbols-outlined text-[18px]">{icon}</span>
+  </button>
+);
+
+const Avatar: React.FC<{ user?: User | null; size?: 'sm' | 'md' | 'lg' }> = ({ user, size = 'md' }) => {
   const dim = size === 'lg' ? 'size-14' : size === 'md' ? 'size-12' : 'size-9';
   const text = size === 'lg' ? 'text-lg' : size === 'md' ? 'text-sm' : 'text-xs';
   const url = getAvatarUrl(user?.avatar);
@@ -137,12 +131,16 @@ const Avatar: React.FC<{ user?: User | null; size?: 'sm' | 'md' | 'lg' }> = ({
   );
 };
 
-// ─── Main Component ────────────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 const Messages: React.FC = () => {
   const doctorId = getDoctorId();
 
-  // ── Core state ───────────────────────────────────────────────────────────────
+  // ── Auth State ──────────────────────────────────────────────────────────────
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // ── Core State ──────────────────────────────────────────────────────────────
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -153,22 +151,22 @@ const Messages: React.FC = () => {
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
 
-  // ── UI state ─────────────────────────────────────────────────────────────────
+  // ── UI State ────────────────────────────────────────────────────────────────
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [editInput, setEditInput] = useState('');
   const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
 
-  // ── Phone search state ───────────────────────────────────────────────────────
+  // ── Phone Search State ──────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResult, setSearchResult] = useState<User | null>(null);
   const [searchStatus, setSearchStatus] = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
   const [startingConv, setStartingConv] = useState(false);
 
-  // ── Refs ─────────────────────────────────────────────────────────────────────
+  // ── Refs ────────────────────────────────────────────────────────────────────
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<any>(null);
+  const socketRef = useRef<Socket | null>(null);
   const selectedConvRef = useRef<Conversation | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
@@ -178,32 +176,94 @@ const Messages: React.FC = () => {
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const messageQueueRef = useRef<Map<string, { message: Message; data: any; retries: number }>>(new Map());
   const pendingMessagesRef = useRef<Set<string>>(new Set());
+  const deletingMessagesRef = useRef<Set<string>>(new Set());
+  const [deletingMessages, setDeletingMessages] = useState<Set<string>>(new Set());
+  // ── Event Handler Refs (to avoid stale closures) ───────────────────────────
+  const handleNewMessageRef = useRef<(data: any) => void>(() => { });
+  const handleTypingSocketRef = useRef<(data: any) => void>(() => { });
+  const handleMessagesReadRef = useRef<(data: any) => void>(() => { });
 
-  useEffect(() => { selectedConvRef.current = selectedConv; }, [selectedConv]);
+  // ─── Authentication Check ───────────────────────────────────────────────────
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = getAuthToken();
+      const id = getDoctorId();
+
+      console.log('🔐 Authentication check:', {
+        hasToken: !!token,
+        tokenValue: token ? `${token.substring(0, 20)}...` : 'none',
+        doctorId: id,
+        isValidId: id ? isValidObjectId(id) : false,
+      });
+
+      // Kiểm tra token
+      if (!token) {
+        setAuthError('No authentication token found. Please login again.');
+        setTimeout(() => redirectToLoginPage(), 2000);
+        setAuthChecked(true);
+        return;
+      }
+
+      // Kiểm tra doctor ID
+      if (!id) {
+        setAuthError('No doctor ID found. Please login again.');
+        setTimeout(() => redirectToLoginPage(), 2000);
+        setAuthChecked(true);
+        return;
+      }
+
+      // Kiểm tra format ObjectId
+      if (!isValidObjectId(id)) {
+        setAuthError(`Invalid doctor ID format. Please contact support.`);
+        setTimeout(() => redirectToLoginPage(), 2000);
+        setAuthChecked(true);
+        return;
+      }
+
+      setAuthChecked(true);
+    };
+
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    selectedConvRef.current = selectedConv;
+  }, [selectedConv]);
 
   // ─── Cleanup ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     return () => {
-      if (socketRef.current) { socketRef.current.removeAllListeners(); socketRef.current.disconnect(); }
+      if (socketRef.current) {
+        socketRef.current.removeAllListeners();
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      deletingMessagesRef.current.clear();
     };
   }, []);
 
-  // ─── Click outside ──────────────────────────────────────────────────────────
+
+  // ─── Click Outside Handlers ─────────────────────────────────────────────────
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) setShowInputEmojiPicker(false);
-      if (reactionPickerRef.current && !reactionPickerRef.current.contains(e.target as Node)) setReactingToMessageId(null);
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
+        setShowInputEmojiPicker(false);
+      }
+      if (reactionPickerRef.current && !reactionPickerRef.current.contains(e.target as Node)) {
+        setReactingToMessageId(null);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // ─── Scroll ─────────────────────────────────────────────────────────────────
+  // ─── Scroll Helpers ─────────────────────────────────────────────────────────
 
   const debouncedScrollToBottom = useCallback(() => {
     if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
@@ -213,19 +273,21 @@ const Messages: React.FC = () => {
     }, 100);
   }, []);
 
-  // ─── Mark read ──────────────────────────────────────────────────────────────
+  // ─── API Calls ──────────────────────────────────────────────────────────────
 
   const markAsReadAPI = useCallback(async (conversationId: string) => {
     try {
       const token = getAuthToken();
+      if (!token) return;
+
       await fetch(`${API_BASE_URL}/messages/conversations/${conversationId}/read`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
       });
-    } catch (_) { }
+    } catch (error) {
+      console.error('Failed to mark as read:', error);
+    }
   }, []);
-
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
 
   const safeFormatTime = useCallback((dateStr?: string | number | Date): string => {
     if (!dateStr) return '';
@@ -234,7 +296,6 @@ const Messages: React.FC = () => {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }, []);
 
-  // ✅ QUAN TRỌNG: Hàm lấy preview text từ message
   const getPreviewText = useCallback((msg?: Message): string => {
     if (!msg) return '';
     if (msg.deleted_for_me) return 'This message was deleted';
@@ -248,11 +309,8 @@ const Messages: React.FC = () => {
     return '';
   }, []);
 
-  // ✅ Hàm tạo preview message object cho conversation
   const getPreviewMessage = useCallback((originalMsg?: Message): Message | undefined => {
     if (!originalMsg) return undefined;
-
-    // Nếu message đã bị xóa cho me, tạo preview message mới
     if (originalMsg.deleted_for_me) {
       return {
         ...originalMsg,
@@ -260,169 +318,106 @@ const Messages: React.FC = () => {
         message_type: 'text',
       } as Message;
     }
-
     return originalMsg;
   }, []);
 
-  // ─── Phone search logic ──────────────────────────────────────────────────────
+  // ─── Update Conversation Last Message ───────────────────────────────────────
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setSearchQuery(val);
-    setSearchResult(null);
-
-    if (!val.trim()) { setSearchStatus('idle'); return; }
-
-    if (isPhoneLike(val)) {
-      setSearchStatus('searching');
-
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      searchTimeoutRef.current = setTimeout(async () => {
-        try {
-          const token = getAuthToken();
-          const res = await fetch(
-            `${API_BASE_URL}/messages/search-user?phone=${encodeURIComponent(val.trim())}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const data = await res.json();
-          if (data.success && data.data) {
-            setSearchResult(data.data);
-            setSearchStatus('found');
-          } else {
-            setSearchResult(null);
-            setSearchStatus('not-found');
-          }
-        } catch {
-          setSearchStatus('error');
-        }
-      }, 600);
-    } else {
-      setSearchStatus('idle');
-    }
-  };
-
-  const handleStartConversation = async (user: User) => {
-    if (startingConv) return;
-    setStartingConv(true);
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/conversations/find-or-create`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId: user._id }),
-      });
-      const data = await res.json();
-      if (data.success && data.data) {
-        const newConv: Conversation = data.data;
-        setConversations(prev => {
-          const exists = prev.find(c => c._id === newConv._id);
-          if (exists) return prev;
-          return [newConv, ...prev];
-        });
-        setSelectedConv(newConv);
-        setSearchQuery('');
-        setSearchResult(null);
-        setSearchStatus('idle');
-      }
-    } catch (e) {
-      console.error('Start conversation failed:', e);
-    } finally {
-      setStartingConv(false);
-    }
-  };
-
-  // ─── Socket handlers ─────────────────────────────────────────────────────────
-
-  const handleTypingSocket = useCallback((data: any) => {
-    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
-    setTypingUsers(prev => {
-      const s = new Set(prev);
-      data.isTyping ? s.add(data.userId) : s.delete(data.userId);
-      return s;
-    });
-  }, []);
-
-  const handleMessagesRead = useCallback((data: any) => {
-    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
-    setMessages(prev => prev.map(m =>
-      getSenderId(m.sender_id) !== doctorId ? { ...m, read: true } : m
-    ));
-  }, [doctorId]);
-
-  // ✅ Cập nhật conversation trong state
   const updateConversationLastMessage = useCallback((conversationId: string, message: Message) => {
-    setConversations(prev => prev.map(c => {
-      if (c._id !== conversationId) return c;
-
-      // Tạo preview message phù hợp
-      const previewMessage = getPreviewMessage(message);
-
-      return {
-        ...c,
-        last_message: previewMessage || message,
-        last_message_at: message.timestamp,
-      };
-    }).sort((a, b) =>
-      new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
-    ));
+    setConversations(prev =>
+      prev
+        .map(c => {
+          if (c._id !== conversationId) return c;
+          const previewMessage = getPreviewMessage(message);
+          return {
+            ...c,
+            last_message: previewMessage || message,
+            last_message_at: message.timestamp || message.createdAt || new Date().toISOString(),
+          };
+        })
+        .sort(
+          (a, b) =>
+            new Date(b.last_message_at || 0).getTime() -
+            new Date(a.last_message_at || 0).getTime()
+        )
+    );
   }, [getPreviewMessage]);
 
-  const handleNewMessage = useCallback((rawMsg: any) => {
-    if (!rawMsg) return;
-    const convId = rawMsg.conversationId || rawMsg.conversation_id;
-    if (pendingMessagesRef.current.has(rawMsg._id)) {
-      pendingMessagesRef.current.delete(rawMsg._id);
-      return;
-    }
+  // ─── Fetch Conversations ────────────────────────────────────────────────────
 
-    // Kiểm tra nếu message này bị deleted_for_me
-    const isDeletedForMe = rawMsg.deleted_for?.includes(doctorId);
+  const fetchConversations = useCallback(async () => {
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        redirectToLoginPage();
+        return;
+      }
 
-    const msg: Message = {
-      ...rawMsg,
-      _id: rawMsg._id || `msg_${Date.now()}`,
-      conversation_id: convId,
-      message: isDeletedForMe ? 'This message was deleted' : (rawMsg.message || ''),
-      message_type: isDeletedForMe ? 'text' : (rawMsg.message_type || 'text'),
-      timestamp: rawMsg.timestamp || new Date().toISOString(),
-      reactions: isDeletedForMe ? [] : (rawMsg.reactions || []),
-      deleted_for_me: isDeletedForMe,
-    };
-
-    const active = selectedConvRef.current;
-
-    // Cập nhật conversation list với preview đúng
-    updateConversationLastMessage(convId, msg);
-
-    if (active?._id === convId) {
-      setMessages(prev => {
-        if (prev.some(m => m._id === msg._id)) return prev;
-        const sId = getSenderId(msg.sender_id);
-        if (sId === doctorId) {
-          const idx = prev.findIndex(m => m._temp && m.message === msg.message);
-          if (idx !== -1) { const n = [...prev]; n[idx] = msg; return n; }
-        }
-        return [...prev, msg];
+      const response = await fetch(`${API_BASE_URL}/messages/conversations`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      markAsReadAPI(convId);
-      debouncedScrollToBottom();
-    }
-  }, [doctorId, markAsReadAPI, debouncedScrollToBottom, updateConversationLastMessage]);
 
-  // ─── Fetch messages ──────────────────────────────────────────────────────────
+      if (response.status === 401) {
+        redirectToLoginPage();
+        return;
+      }
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          const transformedConvs = (data.data || []).map((conv: Conversation) => {
+            if (conv.last_message && conv.last_message.deleted_for_me) {
+              return {
+                ...conv,
+                last_message: {
+                  ...conv.last_message,
+                  message: 'This message was deleted',
+                  message_type: 'text',
+                } as Message,
+              };
+            }
+            return conv;
+          });
+          setConversations(
+            transformedConvs.sort(
+              (a: any, b: any) =>
+                new Date(b.last_message_at || 0).getTime() -
+                new Date(a.last_message_at || 0).getTime()
+            )
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch conversations:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ─── Fetch Messages ─────────────────────────────────────────────────────────
 
   const fetchMessages = useCallback(async (conversationId: string) => {
     setMessagesLoading(true);
     try {
       const token = getAuthToken();
-      const res = await fetch(
+      if (!token) {
+        redirectToLoginPage();
+        return;
+      }
+
+      const response = await fetch(
         `${API_BASE_URL}/messages/conversations/${conversationId}/messages`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      if (res.ok) {
-        const data = await res.json();
+
+      if (response.status === 401) {
+        redirectToLoginPage();
+        return;
+      }
+
+      if (response.ok) {
+        const data = await response.json();
         if (data.success) {
-          // Transform messages để xử lý deleted_for_me
           const transformedMessages = (data.data || []).map((msg: any) => {
             const isDeletedForMe = msg.deleted_for?.includes(doctorId);
             if (isDeletedForMe && !msg.deleted) {
@@ -438,13 +433,13 @@ const Messages: React.FC = () => {
           });
           setMessages(transformedMessages);
 
-          // ✅ Cập nhật conversation preview với message cuối cùng
           if (transformedMessages.length > 0) {
             const lastMsg = transformedMessages[transformedMessages.length - 1];
             updateConversationLastMessage(conversationId, lastMsg);
           }
 
-          markAsReadAPI(conversationId);
+          await markAsReadAPI(conversationId);
+
           if (socketRef.current?.connected) {
             socketRef.current.emit('join_conversation', conversationId);
             socketRef.current.emit('messages_read', { conversationId });
@@ -452,14 +447,33 @@ const Messages: React.FC = () => {
           debouncedScrollToBottom();
         }
       }
-    } catch (e) { console.error(e); }
-    finally { setMessagesLoading(false); }
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+    } finally {
+      setMessagesLoading(false);
+    }
   }, [doctorId, markAsReadAPI, debouncedScrollToBottom, updateConversationLastMessage]);
 
-  // ─── Socket connect ──────────────────────────────────────────────────────────
+  // ─── Socket Message Queue ───────────────────────────────────────────────────
+
+  const sendViaSocket = (tempId: string, data: any): Promise<any> =>
+    new Promise((resolve, reject) => {
+      if (!socketRef.current?.connected) {
+        reject(new Error('Socket not connected'));
+        return;
+      }
+      socketRef.current.timeout(5000).emit('send_message', { ...data, tempId }, (err: any, res: any) => {
+        if (err || !res?.success) {
+          reject(new Error(err?.message || res?.error || 'Failed to send'));
+        } else {
+          resolve(res);
+        }
+      });
+    });
 
   const processQueue = useCallback(async () => {
     if (!messageQueueRef.current.size || !socketRef.current?.connected) return;
+
     for (const [tempId, { message, data, retries }] of Array.from(messageQueueRef.current.entries())) {
       if (retries >= MAX_RETRY_COUNT) {
         setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _failed: true } : m));
@@ -472,200 +486,275 @@ const Messages: React.FC = () => {
           setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m));
           messageQueueRef.current.delete(tempId);
         }
-      } catch {
+      } catch (error) {
+        console.error(`Failed to send message ${tempId}, retry ${retries + 1}/${MAX_RETRY_COUNT}`);
         messageQueueRef.current.set(tempId, { message, data, retries: retries + 1 });
       }
     }
   }, []);
 
+  // ─── Socket Connection ──────────────────────────────────────────────────────
+
   const connectSocket = useCallback(() => {
     const token = getAuthToken();
-    if (!token || socketRef.current?.connected) return socketRef.current;
-    if (socketRef.current) { socketRef.current.removeAllListeners(); socketRef.current.disconnect(); }
+    const id = getDoctorId();
+
+    if (!token || !id || !isValidObjectId(id)) {
+      console.error('❌ Cannot connect socket: invalid credentials');
+      return null;
+    }
+
+    if (socketRef.current?.connected) {
+      return socketRef.current;
+    }
+
+    if (socketRef.current) {
+      socketRef.current.removeAllListeners();
+      socketRef.current.disconnect();
+    }
 
     const socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket'],
       reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
+      reconnectionAttempts: SOCKET_RECONNECTION_ATTEMPTS,
+      reconnectionDelay: SOCKET_RECONNECTION_DELAY,
       reconnectionDelayMax: 5000,
       timeout: 10000,
     });
+
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      console.log('✅ Socket connected successfully');
       setIsSocketConnected(true);
-      if (selectedConvRef.current) socket.emit('join_conversation', selectedConvRef.current._id);
+      if (selectedConvRef.current) {
+        socket.emit('join_conversation', selectedConvRef.current._id);
+      }
       processQueue();
     });
-    socket.on('disconnect', () => setIsSocketConnected(false));
-    socket.on('connect_error', () => setIsSocketConnected(false));
 
-    socket.on('new_message', handleNewMessage);
+    socket.on('disconnect', (reason: string) => {
+      console.log('❌ Socket disconnected:', reason);
+      setIsSocketConnected(false);
+    });
+
+    socket.on('connect_error', (err: Error) => {
+      console.error('❌ Socket connection error:', err.message);
+      setIsSocketConnected(false);
+    });
+
+    // Socket event handlers using refs to avoid stale closures
+    socket.on('new_message', (data: any) => handleNewMessageRef.current(data));
+    socket.on('user_typing', (data: any) => handleTypingSocketRef.current(data));
+    socket.on('messages_read_by_user', (data: any) => handleMessagesReadRef.current(data));
 
     socket.on('message_edited', (data: any) => {
       if (selectedConvRef.current?._id === data.conversationId) {
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, ...data.message } : m));
-        // Cập nhật conversation preview nếu message được edit là last message
         if (data.message && selectedConvRef.current?.last_message?._id === data.messageId) {
-          updateConversationLastMessage(data.conversationId, data.message);
+          setConversations(prev =>
+            prev.map(c =>
+              c._id === data.conversationId
+                ? { ...c, last_message: data.message }
+                : c
+            )
+          );
         }
       }
     });
 
     socket.on('message_deleted', (data: any) => {
-      if (selectedConvRef.current?._id !== data.conversationId) return;
+      if (deletingMessagesRef.current.has(data.messageId || data.message?._id)) {
+        deletingMessagesRef.current.delete(data.messageId || data.message?._id);
+        return;
+      }
 
       if (data.type === 'everyone') {
         const deletedMsg = data.message;
         const messageId = deletedMsg?._id || data.messageId;
-        setMessages(prev => prev.map(m => {
-          if (m._id !== messageId) return m;
-          return deletedMsg
-            ? { ...m, ...deletedMsg }
-            : { ...m, deleted: true, message: 'This message was deleted', reactions: [] };
-        }));
-
-        // ✅ Cập nhật conversation preview khi người khác xóa
+        setMessages(prev =>
+          prev.map(m => {
+            if (m._id !== messageId) return m;
+            return deletedMsg
+              ? { ...m, ...deletedMsg }
+              : { ...m, deleted: true, message: 'This message was deleted', reactions: [] };
+          })
+        );
         if (selectedConvRef.current?.last_message?._id === messageId) {
-          const deletedPreview = {
-            _id: messageId,
-            message: 'This message was deleted',
-            message_type: 'text',
-            deleted: true,
-            timestamp: new Date().toISOString(),
-          } as Message;
-          updateConversationLastMessage(data.conversationId, deletedPreview);
+          setConversations(prev =>
+            prev.map(c =>
+              c._id === data.conversationId
+                ? {
+                  ...c,
+                  last_message: {
+                    _id: messageId,
+                    message: 'This message was deleted',
+                    message_type: 'text',
+                    deleted: true,
+                    timestamp: new Date().toISOString(),
+                  } as Message,
+                }
+                : c
+            )
+          );
         }
       } else if (data.type === 'me') {
-        // Xử lý delete for me từ socket
         const messageId = data.messageId;
-        setMessages(prev => prev.map(m => {
-          if (m._id !== messageId) return m;
-          return {
-            ...m,
-            deleted_for_me: true,
-            message: 'This message was deleted',
-            message_type: 'text',
-            reactions: [],
-          };
-        }));
-
-        // ✅ Cập nhật conversation preview
-        if (selectedConvRef.current?.last_message?._id === messageId) {
-          const deletedPreview = {
-            _id: messageId,
-            message: 'This message was deleted',
-            message_type: 'text',
-            deleted_for_me: true,
-            timestamp: new Date().toISOString(),
-          } as Message;
-          updateConversationLastMessage(data.conversationId, deletedPreview);
-        }
+        setMessages(prev =>
+          prev.map(m => {
+            if (m._id !== messageId) return m;
+            return {
+              ...m,
+              deleted_for_me: true,
+              message: 'This message was deleted',
+              message_type: 'text',
+              reactions: [],
+            };
+          })
+        );
       }
     });
 
     socket.on('reaction_added', (data: any) => {
-      if (selectedConvRef.current?._id === data.conversationId)
+      if (selectedConvRef.current?._id === data.conversationId) {
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
+      }
     });
+
     socket.on('reaction_removed', (data: any) => {
-      if (selectedConvRef.current?._id === data.conversationId)
+      if (selectedConvRef.current?._id === data.conversationId) {
         setMessages(prev => prev.map(m => m._id === data.messageId ? { ...m, reactions: data.message.reactions } : m));
+      }
     });
-    socket.on('user_typing', handleTypingSocket);
-    socket.on('messages_read_by_user', handleMessagesRead);
 
     socket.on('message_sent_success', (res: any) => {
       if (res.messageId && res.tempId) {
-        setMessages(prev => prev.map(m => m._id === res.tempId ? { ...m, _id: res.messageId, _temp: false } : m));
+        setMessages(prev =>
+          prev.map(m => m._id === res.tempId ? { ...m, _id: res.messageId, _temp: false } : m)
+        );
         pendingMessagesRef.current.add(res.messageId);
       }
     });
 
     socket.on('message_error', (err: any) => {
-      if (err.tempId) setMessages(prev => prev.map(m => m._id === err.tempId ? { ...m, _failed: true } : m));
-    });
-
-    socket.on('delete_message_success', (res: any) => {
-      console.debug('[socket] delete_message_success', res);
-    });
-    socket.on('delete_message_error', (err: any) => {
-      console.error('[socket] delete_message_error', err);
-      if (err.messageId && selectedConvRef.current) {
-        fetchMessages(selectedConvRef.current._id);
+      if (err.tempId) {
+        setMessages(prev => prev.map(m => m._id === err.tempId ? { ...m, _failed: true } : m));
       }
     });
 
     return socket;
-  }, [handleTypingSocket, handleMessagesRead, handleNewMessage, processQueue, fetchMessages, doctorId, updateConversationLastMessage]);
+  }, [processQueue]);
 
-  // ─── Fetch conversations ──────────────────────────────────────────────────────
+  // ─── Socket Event Handlers (using refs) ─────────────────────────────────────
 
-  const fetchConversations = useCallback(async () => {
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/conversations`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          // Transform conversations để xử lý preview đúng
-          const transformedConvs = (data.data || []).map((conv: Conversation) => {
-            if (conv.last_message && conv.last_message.deleted_for_me) {
-              return {
-                ...conv,
-                last_message: {
-                  ...conv.last_message,
-                  message: 'This message was deleted',
-                  message_type: 'text',
-                } as Message,
-              };
-            }
-            return conv;
-          });
-          setConversations(
-            transformedConvs.sort((a: any, b: any) =>
-              new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
-            )
-          );
-        }
+  const handleTypingSocket = useCallback((data: any) => {
+    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
+    setTypingUsers(prev => {
+      const newSet = new Set(prev);
+      if (data.isTyping) {
+        newSet.add(data.userId);
+      } else {
+        newSet.delete(data.userId);
       }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+      return newSet;
+    });
   }, []);
 
-  // ─── Init ────────────────────────────────────────────────────────────────────
+  const handleMessagesRead = useCallback((data: any) => {
+    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
+    setMessages(prev =>
+      prev.map(m =>
+        getSenderId(m.sender_id) !== doctorId ? { ...m, read: true } : m
+      )
+    );
+  }, [doctorId]);
 
-  useEffect(() => {
-    if (!doctorId) { redirectToLoginPage(); return; }
-    fetchConversations();
-    const socket = connectSocket();
-    const queueInterval = setInterval(processQueue, 1000);
-    return () => {
-      clearInterval(queueInterval);
-      socket?.removeAllListeners();
-      socket?.disconnect();
+  const handleNewMessage = useCallback((rawMsg: any) => {
+    if (!rawMsg) return;
+    const convId = rawMsg.conversationId || rawMsg.conversation_id;
+
+    if (pendingMessagesRef.current.has(rawMsg._id)) {
+      pendingMessagesRef.current.delete(rawMsg._id);
+      return;
+    }
+
+    const isDeletedForMe = rawMsg.deleted_for?.includes(doctorId);
+
+    const msg: Message = {
+      ...rawMsg,
+      _id: rawMsg._id || `msg_${Date.now()}`,
+      conversation_id: convId,
+      message: isDeletedForMe ? 'This message was deleted' : (rawMsg.message || ''),
+      message_type: isDeletedForMe ? 'text' : (rawMsg.message_type || 'text'),
+      timestamp: rawMsg.timestamp || new Date().toISOString(),
+      reactions: isDeletedForMe ? [] : (rawMsg.reactions || []),
+      deleted_for_me: isDeletedForMe,
     };
-  }, [doctorId, connectSocket, fetchConversations, processQueue]);
+
+    const active = selectedConvRef.current;
+    updateConversationLastMessage(convId, msg);
+
+    if (active?._id === convId) {
+      setMessages(prev => {
+        if (prev.some(m => m._id === msg._id)) return prev;
+        const senderId = getSenderId(msg.sender_id);
+        if (senderId === doctorId) {
+          const tempIndex = prev.findIndex(m => m._temp && m.message === msg.message);
+          if (tempIndex !== -1) {
+            const newMessages = [...prev];
+            newMessages[tempIndex] = msg;
+            return newMessages;
+          }
+        }
+        return [...prev, msg];
+      });
+      markAsReadAPI(convId);
+      debouncedScrollToBottom();
+    }
+  }, [doctorId, markAsReadAPI, debouncedScrollToBottom, updateConversationLastMessage]);
+
+  // Update refs when handlers change
+  useEffect(() => {
+    handleNewMessageRef.current = handleNewMessage;
+    handleTypingSocketRef.current = handleTypingSocket;
+    handleMessagesReadRef.current = handleMessagesRead;
+  }, [handleNewMessage, handleTypingSocket, handleMessagesRead]);
+
+  // ─── Initialize ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (selectedConv) { fetchMessages(selectedConv._id); setTypingUsers(new Set()); }
+    if (!authChecked) return;
+    if (authError) return;
+
+    fetchConversations();
+    connectSocket();
+
+    const queueInterval = setInterval(processQueue, 3000);
+    return () => clearInterval(queueInterval);
+  }, [authChecked, authError, fetchConversations, connectSocket, processQueue]);
+
+  useEffect(() => {
+    if (selectedConv) {
+      fetchMessages(selectedConv._id);
+      setTypingUsers(new Set());
+    }
   }, [selectedConv, fetchMessages]);
 
-  useEffect(() => { if (messages.length > 0) debouncedScrollToBottom(); }, [messages, debouncedScrollToBottom]);
+  useEffect(() => {
+    if (messages.length > 0) debouncedScrollToBottom();
+  }, [messages, debouncedScrollToBottom]);
 
-  // ─── Typing ──────────────────────────────────────────────────────────────────
+  // ─── Typing Handlers ────────────────────────────────────────────────────────
 
   const handleTypingStart = useCallback(() => {
     if (!selectedConvRef.current || !socketRef.current?.connected) return;
     socketRef.current.emit('typing_start', { conversationId: selectedConvRef.current._id });
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      socketRef.current?.connected && selectedConvRef.current &&
+      if (socketRef.current?.connected && selectedConvRef.current) {
         socketRef.current.emit('typing_stop', { conversationId: selectedConvRef.current._id });
+      }
       typingTimeoutRef.current = null;
     }, TYPING_TIMEOUT);
   }, []);
@@ -673,276 +762,493 @@ const Messages: React.FC = () => {
   const handleTypingStop = useCallback(() => {
     if (!selectedConvRef.current || !socketRef.current?.connected) return;
     socketRef.current.emit('typing_stop', { conversationId: selectedConvRef.current._id });
-    if (typingTimeoutRef.current) { clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = null; }
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
   }, []);
 
-  // ─── Send ────────────────────────────────────────────────────────────────────
+  // ─── Phone Search ───────────────────────────────────────────────────────────
 
-  const sendViaSocket = (tempId: string, data: any): Promise<any> =>
-    new Promise((resolve, reject) => {
-      if (!socketRef.current?.connected) { reject(new Error('Not connected')); return; }
-      socketRef.current.timeout(5000).emit('send_message', { ...data, tempId }, (err: any, res: any) => {
-        if (err || !res?.success) reject(new Error(err?.message || res?.error || 'Failed'));
-        else resolve(res);
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+    setSearchResult(null);
+
+    if (!value.trim()) {
+      setSearchStatus('idle');
+      return;
+    }
+
+    if (isPhoneLike(value)) {
+      setSearchStatus('searching');
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = setTimeout(async () => {
+        try {
+          const token = getAuthToken();
+          if (!token) {
+            redirectToLoginPage();
+            return;
+          }
+
+          const response = await fetch(
+            `${API_BASE_URL}/messages/search-user?phone=${encodeURIComponent(value.trim())}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+
+          if (response.status === 401) {
+            redirectToLoginPage();
+            return;
+          }
+
+          const data = await response.json();
+          if (data.success && data.data) {
+            setSearchResult(data.data);
+            setSearchStatus('found');
+          } else {
+            setSearchResult(null);
+            setSearchStatus('not-found');
+          }
+        } catch (error) {
+          console.error('Search failed:', error);
+          setSearchStatus('error');
+        }
+      }, 600);
+    } else {
+      setSearchStatus('idle');
+    }
+  };
+
+  const handleStartConversation = async (user: User) => {
+    if (startingConv) return;
+    setStartingConv(true);
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        redirectToLoginPage();
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/messages/conversations/find-or-create`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ participantId: user._id }),
       });
-    });
+
+      if (response.status === 401) {
+        redirectToLoginPage();
+        return;
+      }
+
+      const data = await response.json();
+      if (data.success && data.data) {
+        const newConv: Conversation = data.data;
+        setConversations(prev => {
+          const exists = prev.find(c => c._id === newConv._id);
+          if (exists) return prev;
+          return [newConv, ...prev];
+        });
+        setSelectedConv(newConv);
+        setSearchQuery('');
+        setSearchResult(null);
+        setSearchStatus('idle');
+      }
+    } catch (error) {
+      console.error('Failed to start conversation:', error);
+    } finally {
+      setStartingConv(false);
+    }
+  };
+
+  // ─── Send Message ───────────────────────────────────────────────────────────
 
   const handleSendText = async () => {
     if (!input.trim() || !selectedConv || sending) return;
+
     const text = input.trim();
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tempMsg: Message = {
-      _id: tempId, conversation_id: selectedConv._id,
-      sender_id: { _id: doctorId, name: 'You', role: 'doctor' },
+      _id: tempId,
+      conversation_id: selectedConv._id,
+      sender_id: { _id: doctorId!, name: 'You', role: 'doctor' },
       receiver_id: selectedConv.participant,
-      message: text, message_type: 'text',
-      read: false, timestamp: new Date().toISOString(), _temp: true,
+      message: text,
+      message_type: 'text',
+      read: false,
+      timestamp: new Date().toISOString(),
+      _temp: true,
     };
+
     setMessages(prev => [...prev, tempMsg]);
     setInput('');
     setShowInputEmojiPicker(false);
     handleTypingStop();
     setSending(true);
-    const msgData = { conversationId: selectedConv._id, receiverId: selectedConv.participant._id, message: text, messageType: 'text' };
+
+    const msgData = {
+      conversationId: selectedConv._id,
+      receiverId: selectedConv.participant._id,
+      message: text,
+      messageType: 'text',
+    };
+
     try {
       const result = await sendViaSocket(tempId, msgData);
-      setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m));
-    } catch {
+      setMessages(prev =>
+        prev.map(m => m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m)
+      );
+    } catch (error) {
+      console.error('Failed to send via socket, adding to queue:', error);
       messageQueueRef.current.set(tempId, { message: tempMsg, data: msgData, retries: 0 });
+
+      // REST fallback
       try {
         const token = getAuthToken();
-        const res = await fetch(`${API_BASE_URL}/messages/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ receiver_id: selectedConv.participant._id, message: text, message_type: 'text' }),
-        });
-        if (res.ok) {
-          const d = await res.json();
-          if (d.success && d.data?.message?._id) {
-            setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: d.data.message._id, _temp: false } : m));
-            pendingMessagesRef.current.add(d.data.message._id);
-            messageQueueRef.current.delete(tempId);
+        if (token) {
+          const response = await fetch(`${API_BASE_URL}/messages/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              receiver_id: selectedConv.participant._id,
+              message: text,
+              message_type: 'text',
+            }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data?.message?._id) {
+              setMessages(prev =>
+                prev.map(m => m._id === tempId ? { ...m, _id: data.data.message._id, _temp: false } : m)
+              );
+              pendingMessagesRef.current.add(data.data.message._id);
+              messageQueueRef.current.delete(tempId);
+            }
           }
         }
-      } catch (e) { console.error('REST fallback failed:', e); }
-    } finally { setSending(false); }
+      } catch (restError) {
+        console.error('REST fallback failed:', restError);
+      }
+    } finally {
+      setSending(false);
+    }
   };
+
+  // ─── Send File ──────────────────────────────────────────────────────────────
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConv || sending) return;
-    if (file.size > 10 * 1024 * 1024) { alert('File is too large (max 10 MB)'); return; }
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert('File is too large (max 10 MB)');
+      return;
+    }
+
     const isImage = file.type.startsWith('image/');
     const tempId = `temp_media_${Date.now()}`;
     const blobUrl = URL.createObjectURL(file);
+
     const tempMsg: Message = {
-      _id: tempId, conversation_id: selectedConv._id,
-      sender_id: { _id: doctorId, name: 'You', role: 'doctor' },
+      _id: tempId,
+      conversation_id: selectedConv._id,
+      sender_id: { _id: doctorId!, name: 'You', role: 'doctor' },
       receiver_id: selectedConv.participant,
-      message: '', message_type: isImage ? 'image' : 'file',
-      media_url: blobUrl, media_name: file.name,
-      read: false, timestamp: new Date().toISOString(), _temp: true,
+      message: '',
+      message_type: isImage ? 'image' : 'file',
+      media_url: blobUrl,
+      media_name: file.name,
+      read: false,
+      timestamp: new Date().toISOString(),
+      _temp: true,
     };
+
     setMessages(prev => [...prev, tempMsg]);
     debouncedScrollToBottom();
     setSending(true);
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('receiver_id', selectedConv.participant._id);
-    if (selectedConv.medical_record_id) formData.append('medical_record_id', selectedConv.medical_record_id.toString());
+    if (selectedConv.medical_record_id) {
+      formData.append('medical_record_id', selectedConv.medical_record_id.toString());
+    }
+
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/send-with-media`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData,
-      });
-      if (res.ok) {
-        const d = await res.json();
-        if (d.success && d.data?._id) {
-          setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _id: d.data._id, media_url: d.data.media_url, _temp: false } : m));
-          pendingMessagesRef.current.add(d.data._id);
-        }
-      }
-    } catch { setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _failed: true } : m)); }
-    finally { setSending(false); if (fileInputRef.current) fileInputRef.current.value = ''; URL.revokeObjectURL(blobUrl); }
-  };
-
-  const handleDeleteMessage = async (messageId: string, type: 'me' | 'everyone') => {
-    const confirmText = type === 'everyone'
-      ? 'Delete for everyone?'
-      : 'Delete for me?';
-    if (!window.confirm(confirmText)) return;
-
-    const conv = selectedConvRef.current;
-    if (!conv) return;
-
-    const snapshotMessages = [...messages];
-    const snapshotConversations = [...conversations];
-
-    // Tìm message đang bị xóa
-    const targetMessage = messages.find(m => m._id === messageId);
-    const isLastMessage = conv.last_message?._id === messageId;
-
-    if (type === 'everyone') {
-      setMessages(prev => prev.map(m =>
-        m._id === messageId
-          ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] }
-          : m
-      ));
-    } else {
-      setMessages(prev => prev.map(m =>
-        m._id === messageId
-          ? {
-            ...m,
-            deleted_for_me: true,
-            deleted: false,
-            message: 'This message was deleted',
-            message_type: 'text',
-            reactions: [],
-            media_url: undefined,
-            media_name: undefined,
-          }
-          : m
-      ));
-    }
-
-    // ✅ Cập nhật conversation preview nếu message bị xóa là last message
-    if (isLastMessage) {
-      const deletedPreview = {
-        _id: messageId,
-        message: 'This message was deleted',
-        message_type: 'text',
-        deleted: type === 'everyone',
-        deleted_for_me: type === 'me',
-        timestamp: targetMessage?.timestamp || new Date().toISOString(),
-      } as Message;
-      updateConversationLastMessage(conv._id, deletedPreview);
-    }
-
-    // Socket delete attempt
-    if (socketRef.current?.connected) {
-      try {
-        await deleteViaSocket(messageId, conv._id, type);
+      if (!token) {
+        redirectToLoginPage();
         return;
-      } catch (err) {
-        console.warn('[socket] delete failed, falling back to REST:', err);
-        setMessages(snapshotMessages);
-        setConversations(snapshotConversations);
       }
-    }
 
-    // REST fallback
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/${messageId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
+      const response = await fetch(`${API_BASE_URL}/messages/send-with-media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      // Success - giữ nguyên optimistic update
-      if (type === 'everyone') {
-        setMessages(prev => prev.map(m =>
-          m._id === messageId
-            ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] }
-            : m
-        ));
-      } else {
-        setMessages(prev => prev.map(m =>
-          m._id === messageId
-            ? {
-              ...m,
-              deleted_for_me: true,
-              deleted: false,
-              message: 'This message was deleted',
-              message_type: 'text',
-              reactions: [],
-              media_url: undefined,
-              media_name: undefined,
-            }
-            : m
-        ));
+      if (response.status === 401) {
+        redirectToLoginPage();
+        return;
       }
-    } catch (restErr) {
-      console.error('[REST] delete failed:', restErr);
-      alert('Failed to delete message. Please try again.');
-      setMessages(snapshotMessages);
-      setConversations(snapshotConversations);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data?._id) {
+          setMessages(prev =>
+            prev.map(m => m._id === tempId ? { ...m, _id: data.data._id, media_url: data.data.media_url, _temp: false } : m)
+          );
+          pendingMessagesRef.current.add(data.data._id);
+        }
+      } else {
+        setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _failed: true } : m));
+      }
+    } catch (error) {
+      console.error('Failed to send file:', error);
+      setMessages(prev => prev.map(m => m._id === tempId ? { ...m, _failed: true } : m));
+    } finally {
+      setSending(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      URL.revokeObjectURL(blobUrl);
     }
   };
 
-  const deleteViaSocket = (
-    messageId: string,
-    conversationId: string,
-    type: 'me' | 'everyone',
-  ): Promise<any> =>
+  // ─── Delete Message ─────────────────────────────────────────────────────────
+
+  const deleteViaSocket = (messageId: string, conversationId: string, type: 'me' | 'everyone'): Promise<any> =>
     new Promise((resolve, reject) => {
       if (!socketRef.current?.connected) {
         reject(new Error('Socket not connected'));
         return;
       }
-      socketRef.current
-        .timeout(5000)
-        .emit(
-          'delete_message',
-          { messageId, conversationId, type },
-          (err: any, res: any) => {
-            if (err || !res?.success) {
-              reject(new Error(err?.message || res?.error || 'Delete failed'));
-            } else {
-              resolve(res);
-            }
-          },
-        );
+      socketRef.current.timeout(5000).emit(
+        'delete_message',
+        { messageId, conversationId, type },
+        (err: any, res: any) => {
+          if (err || !res?.success) {
+            reject(new Error(err?.message || res?.error || 'Delete failed'));
+          } else {
+            resolve(res);
+          }
+        }
+      );
     });
+
+  const handleDeleteMessage = async (messageId: string, type: 'me' | 'everyone') => {
+    const conv = selectedConvRef.current;
+    if (!conv) return;
+
+    if (!messageId || typeof messageId !== 'string') {
+      console.warn('Invalid messageId:', messageId);
+      return;
+    }
+
+    if (messageId.startsWith('temp_')) {
+      alert('Please wait for the message to be sent before deleting');
+      return;
+    }
+
+    // Ngăn double-click
+    if (deletingMessages.has(messageId)) return;
+    setDeletingMessages(prev => new Set(prev).add(messageId));
+
+    if (!window.confirm(type === 'everyone' ? 'Delete this message for everyone?' : 'Remove this message from your view?')) {
+      setDeletingMessages(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(messageId);
+        return newSet;
+      });
+      return;
+    }
+
+    const targetMessage = messages.find(m => m._id === messageId);
+    const isLastMessage = conv.last_message?._id === messageId;
+
+    // Optimistic update
+    if (type === 'everyone') {
+      setMessages(prev =>
+        prev.map(m =>
+          m._id === messageId ? { ...m, deleted: true, message: 'This message was deleted', reactions: [] } : m
+        )
+      );
+    } else {
+      setMessages(prev =>
+        prev.map(m =>
+          m._id === messageId
+            ? { ...m, deleted_for_me: true, message: 'This message was deleted', message_type: 'text', reactions: [] }
+            : m
+        )
+      );
+    }
+
+    if (isLastMessage) {
+      setConversations(prev =>
+        prev.map(c =>
+          c._id === conv._id
+            ? {
+              ...c,
+              last_message: {
+                _id: messageId,
+                message: 'This message was deleted',
+                message_type: 'text',
+                deleted: type === 'everyone',
+                deleted_for_me: type === 'me',
+                timestamp: targetMessage?.timestamp || new Date().toISOString(),
+              } as Message,
+            }
+            : c
+        )
+      );
+    }
+
+    // Thêm timeout để tránh rollback quá sớm
+    const deleteTimeout = setTimeout(() => {
+      console.warn('Delete operation timeout, will retry...');
+    }, 5000);
+
+    try {
+      if (socketRef.current?.connected) {
+        await deleteViaSocket(messageId, conv._id, type);
+        clearTimeout(deleteTimeout);
+        setDeletingMessages(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(messageId);
+          return newSet;
+        });
+        return;
+      }
+      throw new Error('Socket not connected');
+    } catch (error) {
+      clearTimeout(deleteTimeout);
+      console.warn('Socket delete failed, falling back to REST:', error);
+
+      // KHÔNG rollback ngay, chờ REST fallback
+      try {
+        const token = getAuthToken();
+        if (!token) throw new Error('No token');
+
+        const response = await fetch(`${API_BASE_URL}/messages/${messageId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type }),
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        // Success - giữ nguyên optimistic update
+        setDeletingMessages(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(messageId);
+          return newSet;
+        });
+      } catch (restError) {
+        console.error('REST delete failed:', restError);
+        // Chỉ rollback nếu cả socket và REST đều thất bại
+        // Rollback về snapshot
+        setMessages(prev => prev.map(m =>
+          m._id === messageId ? targetMessage! : m
+        ));
+        if (isLastMessage) {
+          setConversations(prev =>
+            prev.map(c =>
+              c._id === conv._id
+                ? { ...c, last_message: targetMessage }
+                : c
+            )
+          );
+        }
+        alert('Failed to delete message. Please try again.');
+        setDeletingMessages(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(messageId);
+          return newSet;
+        });
+      }
+    }
+  };
+
+
+  // ─── Edit Message ───────────────────────────────────────────────────────────
 
   const handleEditMessage = async () => {
     if (!editingMessage || !editInput.trim()) return;
+
     try {
       const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/messages/${editingMessage._id}/edit`, {
+      if (!token) {
+        redirectToLoginPage();
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/messages/${editingMessage._id}/edit`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ newMessage: editInput }),
       });
-      if (res.ok) {
+
+      if (response.status === 401) {
+        redirectToLoginPage();
+        return;
+      }
+
+      if (response.ok) {
         const updatedMsg = { ...editingMessage, message: editInput, edited: true };
         setMessages(prev => prev.map(m => m._id === editingMessage._id ? updatedMsg : m));
-        // Cập nhật conversation preview nếu message được edit là last message
         if (selectedConvRef.current?.last_message?._id === editingMessage._id) {
-          updateConversationLastMessage(selectedConvRef.current._id, updatedMsg);
+          setConversations(prev =>
+            prev.map(c =>
+              c._id === selectedConvRef.current?._id ? { ...c, last_message: updatedMsg } : c
+            )
+          );
         }
         setEditingMessage(null);
         setEditInput('');
+      } else {
+        alert('Failed to edit message');
       }
-    } catch { alert('Failed to edit message'); }
+    } catch (error) {
+      console.error('Failed to edit message:', error);
+      alert('Failed to edit message');
+    }
   };
+
+  // ─── Reaction ───────────────────────────────────────────────────────────────
 
   const handleReaction = async (messageId: string, emoji: string) => {
     setReactingToMessageId(null);
-    setMessages(prev => prev.map(m => {
-      if (m._id !== messageId) return m;
-      const reactions = [...(m.reactions || [])];
-      const idx = reactions.findIndex(r => {
-        const uid = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
-        return uid === doctorId && r.emoji === emoji;
-      });
-      idx > -1
-        ? reactions.splice(idx, 1)
-        : reactions.push({ user_id: { _id: doctorId, name: 'You' } as any, emoji });
-      return { ...m, reactions };
-    }));
+
+    // Optimistic update
+    setMessages(prev =>
+      prev.map(m => {
+        if (m._id !== messageId) return m;
+        const reactions = [...(m.reactions || [])];
+        const existingIndex = reactions.findIndex(r => {
+          const userId = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
+          return userId === doctorId && r.emoji === emoji;
+        });
+        if (existingIndex > -1) {
+          reactions.splice(existingIndex, 1);
+        } else {
+          reactions.push({ user_id: { _id: doctorId, name: 'You' } as any, emoji });
+        }
+        return { ...m, reactions };
+      })
+    );
+
     try {
       const token = getAuthToken();
+      if (!token) return;
+
       await fetch(`${API_BASE_URL}/messages/${messageId}/react`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reaction: emoji }),
       });
-    } catch { console.error('Reaction failed'); }
+    } catch (error) {
+      console.error('Failed to add reaction:', error);
+    }
   };
 
-  // ─── Message bubble ──────────────────────────────────────────────────────────
+  // ─── Message Bubble Component ───────────────────────────────────────────────
 
   const MessageBubble = ({ msg }: { msg: Message }) => {
     const isMe = getSenderId(msg.sender_id) === doctorId;
@@ -954,8 +1260,8 @@ const Messages: React.FC = () => {
     msg.reactions?.forEach(r => {
       if (!grouped[r.emoji]) grouped[r.emoji] = { count: 0, byMe: false };
       grouped[r.emoji].count++;
-      const uid = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
-      if (uid === doctorId) grouped[r.emoji].byMe = true;
+      const userId = typeof r.user_id === 'object' ? r.user_id._id : r.user_id;
+      if (userId === doctorId) grouped[r.emoji].byMe = true;
     });
 
     return (
@@ -965,10 +1271,10 @@ const Messages: React.FC = () => {
         onMouseLeave={() => setHoveredMessageId(null)}
       >
         <div className={`max-w-[75%] flex flex-col ${isMe ? 'items-end' : 'items-start'} relative`}>
-
-          {/* Action menu - chỉ hiển thị nếu chưa bị xóa */}
+          {/* Action Menu */}
           {!isDeleted && !msg._temp && (
-            <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} z-10 bg-white dark:bg-[#102023] shadow-lg rounded-full px-2 py-1 flex gap-1 transition-opacity border border-slate-100 dark:border-[#1e3438]
+            <div
+              className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} z-10 bg-white dark:bg-[#102023] shadow-lg rounded-full px-2 py-1 flex gap-1 transition-opacity border border-slate-100 dark:border-[#1e3438]
               ${isHovered || reactingToMessageId === msg._id ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
             >
               <ActionButton icon="add_reaction" onClick={() => setReactingToMessageId(msg._id)} title="React" />
@@ -979,7 +1285,6 @@ const Messages: React.FC = () => {
                   title="Edit message"
                 />
               )}
-              {/* Delete for everyone — only sender can do this */}
               {isMe && (
                 <ActionButton
                   icon="delete_sweep"
@@ -989,7 +1294,6 @@ const Messages: React.FC = () => {
                   title={msg.read ? 'Delete for everyone (already seen)' : 'Unsend message'}
                 />
               )}
-              {/* Delete for me — available for all messages that are not already deleted for me */}
               {!isDeletedForMe && (
                 <ActionButton
                   icon="delete"
@@ -1002,27 +1306,36 @@ const Messages: React.FC = () => {
             </div>
           )}
 
-          {/* Reaction picker */}
+          {/* Reaction Picker */}
           {reactingToMessageId === msg._id && (
-            <div ref={reactionPickerRef} className={`absolute bottom-full mb-2 ${isMe ? 'right-0' : 'left-0'} z-50 shadow-2xl rounded-2xl`}>
+            <div
+              ref={reactionPickerRef}
+              className={`absolute bottom-full mb-2 ${isMe ? 'right-0' : 'left-0'} z-50 shadow-2xl rounded-2xl`}
+            >
               <EmojiPicker
-                onEmojiClick={(d) => handleReaction(msg._id, d.emoji)}
-                width={300} height={350}
+                onEmojiClick={(data) => handleReaction(msg._id, data.emoji)}
+                width={300}
+                height={350}
                 searchDisabled={false}
                 previewConfig={{ showPreview: false }}
               />
             </div>
           )}
 
-          {/* Bubble */}
-          <div className={`shadow-sm transition-all ${msg.message_type === 'image' && !isDeleted
-            ? 'rounded-2xl p-1 bg-white border border-slate-100'
-            : `px-4 py-3 rounded-[1.5rem] ${isDeleted ? 'bg-slate-100 text-slate-400 border border-slate-200 italic' :
-              msg._failed ? 'bg-rose-50 text-rose-600 border border-rose-200' :
-                isMe ? 'bg-primary text-white rounded-br-none shadow-md shadow-primary/20'
-                  : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
-            }`
-            }`}>
+          {/* Message Bubble */}
+          <div
+            className={`shadow-sm transition-all ${msg.message_type === 'image' && !isDeleted
+              ? 'rounded-2xl p-1 bg-white border border-slate-100'
+              : `px-4 py-3 rounded-[1.5rem] ${isDeleted
+                ? 'bg-slate-100 text-slate-400 border border-slate-200 italic'
+                : msg._failed
+                  ? 'bg-rose-50 text-rose-600 border border-rose-200'
+                  : isMe
+                    ? 'bg-primary text-white rounded-br-none shadow-md shadow-primary/20'
+                    : 'bg-white text-slate-700 rounded-bl-none border border-slate-100'
+              }`
+              }`}
+          >
             {isDeleted && (
               <div className="flex items-center gap-2 text-sm">
                 <span className="material-symbols-outlined text-base">block</span>
@@ -1052,8 +1365,12 @@ const Messages: React.FC = () => {
                       className="rounded-xl max-h-[260px] object-cover w-auto min-w-[120px] min-h-[120px] bg-slate-100"
                       loading="lazy"
                     />
-                    <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer"
-                      className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
+                    <a
+                      href={getMediaUrl(msg.media_url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-xl"
+                    >
                       <span className="material-symbols-outlined text-white text-2xl">open_in_new</span>
                     </a>
                     {msg._temp && (
@@ -1070,8 +1387,12 @@ const Messages: React.FC = () => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold truncate text-sm max-w-[140px]">{msg.media_name || 'File'}</p>
-                      <a href={getMediaUrl(msg.media_url)} target="_blank" rel="noreferrer"
-                        className={`text-xs hover:underline ${isMe ? 'text-white/70' : 'text-primary'}`}>
+                      <a
+                        href={getMediaUrl(msg.media_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`text-xs hover:underline ${isMe ? 'text-white/70' : 'text-primary'}`}
+                      >
                         Download
                       </a>
                     </div>
@@ -1081,20 +1402,24 @@ const Messages: React.FC = () => {
             )}
           </div>
 
-          {/* Reactions - chỉ hiển thị nếu chưa bị xóa */}
+          {/* Reactions Display */}
           {!isDeleted && !msg._failed && Object.keys(grouped).length > 0 && (
             <div className={`flex gap-1 mt-1 flex-wrap px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
-              {Object.entries(grouped).map(([emoji, d]) => (
-                <button key={emoji} onClick={() => handleReaction(msg._id, emoji)}
+              {Object.entries(grouped).map(([emoji, data]) => (
+                <button
+                  key={emoji}
+                  onClick={() => handleReaction(msg._id, emoji)}
                   className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-bold border transition-colors
-                    ${d.byMe ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                  <span>{emoji}</span><span>{d.count}</span>
+                    ${data.byMe ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <span>{emoji}</span>
+                  <span>{data.count}</span>
                 </button>
               ))}
             </div>
           )}
 
-          {/* Timestamp + read status */}
+          {/* Timestamp & Read Status */}
           <div className="mt-1 text-[10px] font-semibold opacity-50 flex items-center gap-1 px-1">
             {safeFormatTime(msg.timestamp)}
             {isMe && !isDeleted && !msg._failed && (
@@ -1108,12 +1433,44 @@ const Messages: React.FC = () => {
     );
   };
 
-  // ─── Render ───────────────────────────────────────────────────────────────────
+  // ─── Render Loading / Error States ──────────────────────────────────────────
+
+  if (!authChecked) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-[#0b1619]">
+        <div className="text-center">
+          <div className="size-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-600 dark:text-slate-400">Checking authentication...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (authError) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-[#0b1619]">
+        <div className="text-center max-w-md px-6">
+          <div className="size-16 rounded-full bg-rose-100 dark:bg-rose-900/20 flex items-center justify-center mx-auto mb-4">
+            <span className="material-symbols-outlined text-rose-500 text-3xl">error</span>
+          </div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Authentication Error</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">{authError}</p>
+          <button
+            onClick={() => redirectToLoginPage()}
+            className="px-5 py-2 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 transition-colors"
+          >
+            Go to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Main Render ────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-[#0b1619] overflow-hidden text-slate-900 dark:text-white">
-
-      {/* Edit modal */}
+      {/* Edit Message Modal */}
       {editingMessage && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white dark:bg-[#102023] rounded-2xl w-full max-w-md p-6 shadow-2xl border border-slate-100 dark:border-[#1e3438]">
@@ -1126,29 +1483,45 @@ const Messages: React.FC = () => {
               autoFocus
             />
             <div className="flex justify-end gap-3">
-              <button onClick={() => setEditingMessage(null)} className="px-4 py-2 text-sm text-slate-500 font-bold hover:bg-slate-50 dark:hover:bg-[#1a2c2f] rounded-lg transition-colors">Cancel</button>
-              <button onClick={handleEditMessage} className="px-5 py-2 text-sm bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-colors">Save</button>
+              <button
+                onClick={() => setEditingMessage(null)}
+                className="px-4 py-2 text-sm text-slate-500 font-bold hover:bg-slate-50 dark:hover:bg-[#1a2c2f] rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditMessage}
+                className="px-5 py-2 text-sm bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-colors"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── SIDEBAR ───────────────────────────────────────────────────────── */}
-      <div className={`w-full md:w-80 lg:w-[340px] flex flex-col border-r border-slate-200 dark:border-[#1e3438] bg-white dark:bg-[#102023] shrink-0 ${selectedConv ? 'hidden md:flex' : 'flex'}`}>
-
-        {/* Sidebar header */}
+      {/* Sidebar */}
+      <div
+        className={`w-full md:w-80 lg:w-[340px] flex flex-col border-r border-slate-200 dark:border-[#1e3438] bg-white dark:bg-[#102023] shrink-0 ${selectedConv ? 'hidden md:flex' : 'flex'
+          }`}
+      >
+        {/* Sidebar Header */}
         <div className="px-5 pt-6 pb-3">
           <div className="flex items-center justify-between mb-5">
             <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Messages</h1>
-            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase
-              ${isSocketConnected ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400' : 'bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400'}`}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase
+              ${isSocketConnected
+                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
+                  : 'bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400'
+                }`}
             >
               <span className={`size-1.5 rounded-full ${isSocketConnected ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`} />
               {isSocketConnected ? 'Live' : 'Offline'}
             </div>
           </div>
 
-          {/* Search input */}
+          {/* Search Input */}
           <div className="relative">
             <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none">
               {searchStatus === 'searching' ? 'hourglass_empty' : 'search'}
@@ -1169,7 +1542,7 @@ const Messages: React.FC = () => {
             )}
           </div>
 
-          {/* Phone search results */}
+          {/* Search Results */}
           {searchQuery && isPhoneLike(searchQuery) && (
             <div className="mt-2 rounded-xl border border-slate-100 dark:border-[#224449] bg-white dark:bg-[#1a2c2f] overflow-hidden shadow-lg">
               {searchStatus === 'searching' && (
@@ -1178,12 +1551,9 @@ const Messages: React.FC = () => {
                   <p className="text-xs text-slate-500 dark:text-slate-400">Searching for user…</p>
                 </div>
               )}
-
               {searchStatus === 'found' && searchResult && (
                 <div className="p-2">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide px-2 pb-1">
-                    Patient found
-                  </p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide px-2 pb-1">Patient found</p>
                   <button
                     onClick={() => handleStartConversation(searchResult)}
                     disabled={startingConv}
@@ -1196,7 +1566,10 @@ const Messages: React.FC = () => {
                       </p>
                       <p className="text-[11px] text-slate-400">{searchResult.phoneNumber}</p>
                     </div>
-                    <div className={`shrink-0 flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-xl text-white bg-primary transition-opacity ${startingConv ? 'opacity-50' : 'hover:bg-primary/90'}`}>
+                    <div
+                      className={`shrink-0 flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-xl text-white bg-primary transition-opacity ${startingConv ? 'opacity-50' : 'hover:bg-primary/90'
+                        }`}
+                    >
                       {startingConv ? (
                         <div className="size-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       ) : (
@@ -1209,7 +1582,6 @@ const Messages: React.FC = () => {
                   </button>
                 </div>
               )}
-
               {searchStatus === 'not-found' && (
                 <div className="flex items-center gap-3 px-4 py-3.5">
                   <div className="size-7 rounded-full bg-slate-100 dark:bg-[#224449] flex items-center justify-center shrink-0">
@@ -1221,7 +1593,6 @@ const Messages: React.FC = () => {
                   </div>
                 </div>
               )}
-
               {searchStatus === 'error' && (
                 <div className="flex items-center gap-3 px-4 py-3.5">
                   <span className="material-symbols-outlined text-rose-400 text-base">error</span>
@@ -1232,7 +1603,7 @@ const Messages: React.FC = () => {
           )}
         </div>
 
-        {/* Conversation list */}
+        {/* Conversation List */}
         <div className="flex-1 overflow-y-auto px-3 pb-6">
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -1249,9 +1620,9 @@ const Messages: React.FC = () => {
           ) : (
             <div className="space-y-0.5">
               {conversations
-                .filter(c => {
+                .filter(conv => {
                   if (!searchQuery || isPhoneLike(searchQuery)) return true;
-                  return c.participant?.name?.toLowerCase().includes(searchQuery.toLowerCase());
+                  return conv.participant?.name?.toLowerCase().includes(searchQuery.toLowerCase());
                 })
                 .map(conv => {
                   const isActive = selectedConv?._id === conv._id;
@@ -1260,14 +1631,15 @@ const Messages: React.FC = () => {
                       key={conv._id}
                       onClick={() => setSelectedConv(conv)}
                       className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all group
-                        ${isActive
-                          ? 'bg-primary text-white shadow-md shadow-primary/20'
-                          : 'hover:bg-slate-50 dark:hover:bg-[#1a2c2f]'}`}
+                        ${isActive ? 'bg-primary text-white shadow-md shadow-primary/20' : 'hover:bg-slate-50 dark:hover:bg-[#1a2c2f]'}`}
                     >
                       <div className="relative shrink-0">
                         <Avatar user={conv.participant} size="md" />
                         {isSocketConnected && (
-                          <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 ${isActive ? 'border-primary bg-emerald-400' : 'border-white dark:border-[#102023] bg-emerald-400'}`} />
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 ${isActive ? 'border-primary bg-emerald-400' : 'border-white dark:border-[#102023] bg-emerald-400'
+                              }`}
+                          />
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -1296,11 +1668,14 @@ const Messages: React.FC = () => {
         </div>
       </div>
 
-      {/* ── CHAT AREA ──────────────────────────────────────────────────────── */}
-      <div className={`flex-1 flex-col h-full overflow-hidden bg-white dark:bg-[#102023] ${selectedConv ? 'flex fixed inset-0 z-50 md:static' : 'hidden md:flex'}`}>
+      {/* Chat Area */}
+      <div
+        className={`flex-1 flex-col h-full overflow-hidden bg-white dark:bg-[#102023] ${selectedConv ? 'flex fixed inset-0 z-50 md:static' : 'hidden md:flex'
+          }`}
+      >
         {selectedConv ? (
           <>
-            {/* Chat header */}
+            {/* Chat Header */}
             <header className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-[#1e3438] bg-white/95 dark:bg-[#102023]/95 backdrop-blur-xl z-20 shadow-sm">
               <div className="flex items-center gap-3">
                 <button
@@ -1311,7 +1686,10 @@ const Messages: React.FC = () => {
                 </button>
                 <div className="relative">
                   <Avatar user={selectedConv.participant} size="md" />
-                  <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-white dark:border-[#102023] ${isSocketConnected ? 'bg-emerald-400' : 'bg-slate-300'}`} />
+                  <span
+                    className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-white dark:border-[#102023] ${isSocketConnected ? 'bg-emerald-400' : 'bg-slate-300'
+                      }`}
+                  />
                 </div>
                 <div>
                   <p className="text-base font-black text-slate-900 dark:text-white">
@@ -1330,7 +1708,7 @@ const Messages: React.FC = () => {
               )}
             </header>
 
-            {/* Messages list */}
+            {/* Messages List */}
             <div className="flex-1 overflow-y-auto px-5 py-5 bg-slate-50/40 dark:bg-[#0b1619]/60 scroll-smooth">
               {messagesLoading ? (
                 <div className="h-full flex items-center justify-center">
@@ -1346,13 +1724,15 @@ const Messages: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {messages.map((msg, i) => <MessageBubble key={msg._id || i} msg={msg} />)}
+                  {messages.map((msg, index) => (
+                    <MessageBubble key={msg._id || index} msg={msg} />
+                  ))}
                   {typingUsers.size > 0 && (
                     <div className="flex justify-start mb-4">
                       <div className="px-4 py-3 rounded-2xl bg-white dark:bg-[#102023] border border-slate-100 dark:border-[#1e3438] rounded-bl-none">
                         <div className="flex gap-1">
-                          {[0, 150, 300].map(d => (
-                            <div key={d} className="size-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                          {[0, 150, 300].map(delay => (
+                            <div key={delay} className="size-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: `${delay}ms` }} />
                           ))}
                         </div>
                       </div>
@@ -1363,10 +1743,16 @@ const Messages: React.FC = () => {
               )}
             </div>
 
-            {/* Input area */}
+            {/* Input Area */}
             <div className="shrink-0 bg-white dark:bg-[#102023] border-t border-slate-100 dark:border-[#1e3438] px-4 py-3">
               <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#1a2c2f] border border-slate-100 dark:border-[#224449] rounded-2xl px-3 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-                <input type="file" ref={fileInputRef} className="hidden" accept="image/*,.pdf,.doc,.docx,.txt" onChange={handleFileSelect} />
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*,.pdf,.doc,.docx,.txt"
+                  onChange={handleFileSelect}
+                />
 
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -1388,8 +1774,9 @@ const Messages: React.FC = () => {
                   {showInputEmojiPicker && (
                     <div className="absolute bottom-full left-0 mb-3 z-50 shadow-2xl rounded-2xl border border-slate-100 dark:border-[#1e3438]">
                       <EmojiPicker
-                        onEmojiClick={(d: EmojiClickData) => { setInput(p => p + d.emoji); handleTypingStart(); }}
-                        width={300} height={380}
+                        onEmojiClick={(data: EmojiClickData) => { setInput(prev => prev + data.emoji); handleTypingStart(); }}
+                        width={300}
+                        height={380}
                         searchDisabled={false}
                         previewConfig={{ showPreview: false }}
                       />
@@ -1400,7 +1787,12 @@ const Messages: React.FC = () => {
                 <input
                   value={input}
                   onChange={e => { setInput(e.target.value); handleTypingStart(); }}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendText();
+                    }
+                  }}
                   onBlur={handleTypingStop}
                   placeholder="Type a message…"
                   className="flex-1 bg-transparent text-sm text-slate-800 dark:text-white placeholder:text-slate-400 outline-none py-1.5 px-2"
@@ -1413,14 +1805,15 @@ const Messages: React.FC = () => {
                   className={`size-9 flex items-center justify-center rounded-xl shrink-0 transition-all
                     ${input.trim() && !sending ? 'bg-primary text-white hover:bg-primary/90 shadow-md shadow-primary/20 active:scale-95' : 'bg-slate-200 dark:bg-[#224449] text-slate-400'}`}
                 >
-                  {sending
-                    ? <div className="size-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    : <span className="material-symbols-outlined text-lg">send</span>
-                  }
+                  {sending ? (
+                    <div className="size-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <span className="material-symbols-outlined text-lg">send</span>
+                  )}
                 </button>
               </div>
 
-              {/* Status line */}
+              {/* Status Line */}
               {(sending || !isSocketConnected) && (
                 <div className="flex items-center justify-center gap-1.5 mt-2 text-[10px] text-slate-400">
                   <span className={`size-1.5 rounded-full ${sending ? 'bg-primary animate-pulse' : 'bg-rose-400 animate-pulse'}`} />
@@ -1430,7 +1823,7 @@ const Messages: React.FC = () => {
             </div>
           </>
         ) : (
-          /* No conversation selected */
+          /* No Conversation Selected */
           <div className="flex-1 flex flex-col items-center justify-center p-12 text-center select-none">
             <div className="size-20 rounded-3xl bg-slate-100 dark:bg-[#1a2c2f] flex items-center justify-center mb-5 shadow-inner">
               <span className="material-symbols-outlined text-primary/30 text-5xl">chat_bubble</span>

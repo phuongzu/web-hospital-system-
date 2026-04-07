@@ -9,17 +9,17 @@ export const API_BASE_URL = 'http://localhost:3000/api';
 export const SOCKET_URL = 'http://localhost:3000';
 
 export const getDoctorId = (): string => {
-  const storedId = localStorage.getItem('doctorId') || 
-                  localStorage.getItem('userId') ||
-                  localStorage.getItem('user_id') ||
-                  localStorage.getItem('id');
+  const storedId = localStorage.getItem('doctorId') ||
+    localStorage.getItem('userId') ||
+    localStorage.getItem('user_id') ||
+    localStorage.getItem('id');
 
   if (!storedId || storedId === 'undefined' || storedId === 'null') {
     console.error('❌ Doctor ID not found in localStorage');
     redirectToLoginPage();
     return '';
   }
-  
+
   return storedId;
 };
 
@@ -32,18 +32,18 @@ export const getAvatarUrl = (avatarPath: string | undefined): string => {
   if (!avatarPath) {
     return 'https://lh3.googleusercontent.com/aida-public/AB6AXuDzGT7gwberGMMlbYPnkoMNOA8qmXTkhXqIBCKvsZx0EM1ksC8Jfgtoaoh8vdBlr9W0ngsc2pkf87T1WhJty8dqmuTRfm2G3_Hzd_T_G_4vlHyxaSkvlmRUYkkpZIwJO9p4eo4FkzbHvN2AdbbHwvHHyxMmCV4gMu4567PLZLQhSsGIXC190ExsQ7dQbejyuRsszhD3Y__YDWJLZKc1BwjeUNmIXRzT1W5ZAZYslyj5WslFz0z6xRdxNl-vKYqdOkctzhJ5P1YrUwG9';
   }
-  
+
   console.log('🔍 getAvatarUrl input:', avatarPath);
-  
+
   if (avatarPath.startsWith('http')) {
     return avatarPath;
   }
-    let filename = avatarPath;
+  let filename = avatarPath;
   if (avatarPath.includes('/')) {
     filename = avatarPath.split('/').pop() || avatarPath;
     console.log('📦 Extracted filename:', filename);
   }
-    const baseUrl = API_BASE_URL.replace('/api', '');
+  const baseUrl = API_BASE_URL.replace('/api', '');
   return `${baseUrl}/uploads/avatars/${filename}`;
 };
 
@@ -69,6 +69,11 @@ export const calculateAge = (dateOfBirth: string | undefined): string => {
   } catch {
     return '';
   }
+};
+
+export const isValidObjectId = (id: string): boolean => {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-fA-F]{24}$/.test(id);
 };
 
 export const formatDate = (dateString: string): string => {
@@ -168,7 +173,7 @@ export class PushNotificationService {
       return false;
     }
   }
-} 
+}
 
 export const getTimeFromDateTime = (dateTimeString: string): string => {
   try {

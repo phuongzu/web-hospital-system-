@@ -54,11 +54,11 @@ const HospitalLogo: React.FC = () => (
         mr: 2
       }}
     >
-      <LocalHospital 
-        sx={{ 
-          fontSize: 40, 
+      <LocalHospital
+        sx={{
+          fontSize: 40,
           color: 'white',
-        }} 
+        }}
       />
       <Box
         sx={{
@@ -81,9 +81,9 @@ const HospitalLogo: React.FC = () => (
       </Box>
     </Box>
     <Box>
-      <Typography 
-        variant="h4" 
-        component="h1" 
+      <Typography
+        variant="h4"
+        component="h1"
         fontWeight="bold"
         sx={{
           background: 'linear-gradient(135deg, #1976d2 0%, #4caf50 100%)',
@@ -94,8 +94,8 @@ const HospitalLogo: React.FC = () => (
       >
         MedPro
       </Typography>
-      <Typography 
-        variant="subtitle1" 
+      <Typography
+        variant="subtitle1"
         color="text.secondary"
         sx={{ fontWeight: 500 }}
       >
@@ -131,10 +131,10 @@ const AnimatedBackground: React.FC = () => (
 );
 
 // Feature Item Component
-const FeatureItem: React.FC<{ icon: React.ReactNode; text: string; delay: number }> = ({ 
-  icon, 
-  text, 
-  delay 
+const FeatureItem: React.FC<{ icon: React.ReactNode; text: string; delay: number }> = ({
+  icon,
+  text,
+  delay
 }) => (
   <Slide in timeout={800} style={{ transitionDelay: `${delay}ms` }} direction="up">
     <Box sx={{ display: 'flex', alignItems: 'center', mb: 2.5, p: 1.5, borderRadius: 3, bgcolor: alpha('#1976d2', 0.02) }}>
@@ -161,82 +161,82 @@ const FeatureItem: React.FC<{ icon: React.ReactNode; text: string; delay: number
 );
 
 // Toggle Switch for Login/Register
-const AuthToggle: React.FC<{ 
-  currentPage: 'login' | 'register'; 
-  onNavigate: (page: 'login' | 'register') => void 
-}> = ({ 
-  currentPage, 
-  onNavigate 
+const AuthToggle: React.FC<{
+  currentPage: 'login' | 'register';
+  onNavigate: (page: 'login' | 'register') => void
+}> = ({
+  currentPage,
+  onNavigate
 }) => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 4 }}>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          background: alpha(theme.palette.primary.main, 0.1),
-          borderRadius: '50px',
-          p: 1,
-          position: 'relative',
-          minWidth: isMobile ? 280 : 320
-        }}
-      >
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 4 }}>
         <Box
           sx={{
-            position: 'absolute',
-            left: currentPage === 'login' ? 8 : '50%',
-            right: currentPage === 'login' ? '50%' : 8,
-            top: 8,
-            bottom: 8,
-            background: 'linear-gradient(135deg, #1976d2 0%, #42a5f5 100%)',
-            borderRadius: '40px',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 4px 15px rgba(25, 118, 210, 0.3)'
-          }}
-        />
-        <Button
-          onClick={() => onNavigate('login')}
-          sx={{
-            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            background: alpha(theme.palette.primary.main, 0.1),
+            borderRadius: '50px',
+            p: 1,
             position: 'relative',
-            zIndex: 1,
-            color: currentPage === 'login' ? 'white' : 'text.primary',
-            fontWeight: 600,
-            textTransform: 'none',
-            fontSize: isMobile ? '0.9rem' : '1rem',
-            minHeight: 48,
-            borderRadius: '40px',
-            transition: 'all 0.3s ease'
+            minWidth: isMobile ? 280 : 320
           }}
         >
-          <Person sx={{ mr: 1, fontSize: 20 }} />
-          Sign In
-        </Button>
-        <Button
-          onClick={() => onNavigate('register')}
-          sx={{
-            flex: 1,
-            position: 'relative',
-            zIndex: 1,
-            color: currentPage === 'register' ? 'white' : 'text.primary',
-            fontWeight: 600,
-            textTransform: 'none',
-            fontSize: isMobile ? '0.9rem' : '1rem',
-            minHeight: 48,
-            borderRadius: '40px',
-            transition: 'all 0.3s ease'
-          }}
-        >
-          <PersonAdd sx={{ mr: 1, fontSize: 20 }} />
-          Register
-        </Button>
+          <Box
+            sx={{
+              position: 'absolute',
+              left: currentPage === 'login' ? 8 : '50%',
+              right: currentPage === 'login' ? '50%' : 8,
+              top: 8,
+              bottom: 8,
+              background: 'linear-gradient(135deg, #1976d2 0%, #42a5f5 100%)',
+              borderRadius: '40px',
+              transition: 'all 0.3s ease',
+              boxShadow: '0 4px 15px rgba(25, 118, 210, 0.3)'
+            }}
+          />
+          <Button
+            onClick={() => onNavigate('login')}
+            sx={{
+              flex: 1,
+              position: 'relative',
+              zIndex: 1,
+              color: currentPage === 'login' ? 'white' : 'text.primary',
+              fontWeight: 600,
+              textTransform: 'none',
+              fontSize: isMobile ? '0.9rem' : '1rem',
+              minHeight: 48,
+              borderRadius: '40px',
+              transition: 'all 0.3s ease'
+            }}
+          >
+            <Person sx={{ mr: 1, fontSize: 20 }} />
+            Sign In
+          </Button>
+          <Button
+            onClick={() => onNavigate('register')}
+            sx={{
+              flex: 1,
+              position: 'relative',
+              zIndex: 1,
+              color: currentPage === 'register' ? 'white' : 'text.primary',
+              fontWeight: 600,
+              textTransform: 'none',
+              fontSize: isMobile ? '0.9rem' : '1rem',
+              minHeight: 48,
+              borderRadius: '40px',
+              transition: 'all 0.3s ease'
+            }}
+          >
+            <PersonAdd sx={{ mr: 1, fontSize: 20 }} />
+            Register
+          </Button>
+        </Box>
       </Box>
-    </Box>
-  );
-};
+    );
+  };
 
 // Unlock Request Modal Component
 const UnlockRequestModal: React.FC<{
@@ -265,7 +265,7 @@ const UnlockRequestModal: React.FC<{
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.email.trim()) {
       setError('Please enter your email address');
       return;
@@ -294,11 +294,11 @@ const UnlockRequestModal: React.FC<{
       });
 
       const data = await response.json();
-      
+
       if (response.ok && data.success) {
         setSuccess('Unlock request submitted successfully! Check your email for confirmation. Our admin team will unlock your account within 24 hours.');
         setFormData({ email: '', reason: '' });
-        
+
         setTimeout(() => {
           onSuccess();
           onClose();
@@ -390,9 +390,9 @@ const UnlockRequestModal: React.FC<{
               </Box>
 
               {error && (
-                <Alert 
-                  severity="error" 
-                  sx={{ 
+                <Alert
+                  severity="error"
+                  sx={{
                     mb: 3,
                     borderRadius: 2
                   }}
@@ -402,9 +402,9 @@ const UnlockRequestModal: React.FC<{
               )}
 
               {success && (
-                <Alert 
-                  severity="success" 
-                  sx={{ 
+                <Alert
+                  severity="success"
+                  sx={{
                     mb: 3,
                     borderRadius: 2
                   }}
@@ -430,7 +430,7 @@ const UnlockRequestModal: React.FC<{
                       </InputAdornment>
                     ),
                   }}
-                  sx={{ 
+                  sx={{
                     mb: 3,
                     '& .MuiOutlinedInput-root': {
                       borderRadius: 2,
@@ -449,7 +449,7 @@ const UnlockRequestModal: React.FC<{
                   multiline
                   rows={4}
                   placeholder="Please explain why you need your account unlocked. This will help us process your request faster..."
-                  sx={{ 
+                  sx={{
                     mb: 4,
                     '& .MuiOutlinedInput-root': {
                       borderRadius: 2,
@@ -484,11 +484,11 @@ const UnlockRequestModal: React.FC<{
                   {loading ? 'Submitting Request...' : 'Submit Unlock Request'}
                 </Button>
 
-                <Typography 
-                  variant="body2" 
-                  color="text.secondary" 
-                  sx={{ 
-                    mt: 2, 
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{
+                    mt: 2,
                     textAlign: 'center',
                     lineHeight: 1.6
                   }}
@@ -565,7 +565,7 @@ const LoginPage: React.FC = () => {
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
-      setError('Please enter a valid email address (e.g., doctor@hospital.com)');
+      setError('Please enter a valid email address)');
       return false;
     }
 
@@ -588,24 +588,24 @@ const LoginPage: React.FC = () => {
     try {
       // For Mock Purposes if API fails or no backend
       if (formData.email === 'doctor@example.com' && formData.password === 'password123') {
-         // Simulating successful login
-         const mockUser = {
-             _id: 'mock-doctor-id',
-             name: 'Dr. Mock',
-             email: 'doctor@example.com',
-             role: 'doctor',
-             accessToken: 'mock-token'
-         };
-         localStorage.setItem('token', mockUser.accessToken);
-         localStorage.setItem('doctorId', mockUser._id);
-         localStorage.setItem('userId', mockUser._id);
-         navigate('/home', { replace: true });
-         return;
+        // Simulating successful login
+        const mockUser = {
+          _id: 'mock-doctor-id',
+          name: 'Dr. Mock',
+          email: 'doctor@example.com',
+          role: 'doctor',
+          accessToken: 'mock-token'
+        };
+        localStorage.setItem('token', mockUser.accessToken);
+        localStorage.setItem('doctorId', mockUser._id);
+        localStorage.setItem('userId', mockUser._id);
+        navigate('/home', { replace: true });
+        return;
       }
 
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -616,16 +616,16 @@ const LoginPage: React.FC = () => {
       });
 
       const data = await response.json();
-      
+
       if (response.ok && data.success) {
         const userData = data.data;
         const userId = userData._id;
-        
+
         // Store tokens and user data
         localStorage.setItem('token', userData.accessToken);
         localStorage.setItem('doctorId', userId);
         localStorage.setItem('userId', userId);
-        
+
         if (rememberMe) {
           localStorage.setItem('rememberMe', 'true');
           localStorage.setItem('savedEmail', formData.email);
@@ -633,37 +633,37 @@ const LoginPage: React.FC = () => {
           localStorage.removeItem('rememberMe');
           localStorage.removeItem('savedEmail');
         }
-        
+
         navigate('/home', { replace: true });
-        
+
       } else {
         let errorMessage = data.message || 'Login failed. Please try again.';
-        
+
         if (response.status === 423) {
-            setUnlockModalOpen(true);
-            errorMessage = '';
+          setUnlockModalOpen(true);
+          errorMessage = '';
         }
-        
+
         if (response.status !== 423) {
           setError(errorMessage);
         }
       }
-      
+
     } catch (err: any) {
       console.error('Login error:', err);
       // Fallback for demo if API is unreachable
-       if (formData.email && formData.password) {
-         const mockUser = {
-             _id: 'mock-doctor-id',
-             name: 'Dr. Demo',
-             email: formData.email,
-             role: 'doctor',
-             accessToken: 'mock-token'
-         };
-         localStorage.setItem('token', mockUser.accessToken);
-         localStorage.setItem('doctorId', mockUser._id);
-         navigate('/home', { replace: true });
-         return;
+      if (formData.email && formData.password) {
+        const mockUser = {
+          _id: 'mock-doctor-id',
+          name: 'Dr. Demo',
+          email: formData.email,
+          role: 'doctor',
+          accessToken: 'mock-token'
+        };
+        localStorage.setItem('token', mockUser.accessToken);
+        localStorage.setItem('doctorId', mockUser._id);
+        navigate('/home', { replace: true });
+        return;
       }
       setError('Unable to connect to server. Please check your internet connection and try again.');
     } finally {
@@ -689,7 +689,7 @@ const LoginPage: React.FC = () => {
       }}
     >
       <AnimatedBackground />
-      
+
       {/* Floating Medical Elements */}
       <Box
         sx={{
@@ -724,10 +724,10 @@ const LoginPage: React.FC = () => {
               <Fade in timeout={800}>
                 <Box sx={{ textAlign: 'left', pr: 4 }}>
                   <HospitalLogo />
-                  
-                  <Typography 
-                    variant="h3" 
-                    component="h2" 
+
+                  <Typography
+                    variant="h3"
+                    component="h2"
                     fontWeight="600"
                     color="primary.main"
                     gutterBottom
@@ -735,9 +735,9 @@ const LoginPage: React.FC = () => {
                   >
                     Welcome Back, Doctor
                   </Typography>
-                  
-                  <Typography 
-                    variant="h6" 
+
+                  <Typography
+                    variant="h6"
                     color="text.secondary"
                     sx={{ mb: 4, lineHeight: 1.6 }}
                   >
@@ -752,7 +752,7 @@ const LoginPage: React.FC = () => {
                       { icon: '🔒', text: 'HIPAA Compliant Security' },
                       { icon: '💊', text: 'Electronic Prescriptions' }
                     ].map((feature, index) => (
-                      <FeatureItem 
+                      <FeatureItem
                         key={index}
                         icon={feature.icon}
                         text={feature.text}
@@ -768,7 +768,7 @@ const LoginPage: React.FC = () => {
           {/* Right Side - Auth Form */}
           <Grid item xs={12} md={6}>
             <Slide in timeout={500} direction={isMobile ? "up" : "left"}>
-              <Card 
+              <Card
                 elevation={0}
                 sx={{
                   borderRadius: 4,
@@ -798,9 +798,9 @@ const LoginPage: React.FC = () => {
                   )}
 
                   {/* Navigation Toggle */}
-                  <AuthToggle 
-                    currentPage="login" 
-                    onNavigate={handleNavigation} 
+                  <AuthToggle
+                    currentPage="login"
+                    onNavigate={handleNavigation}
                   />
 
                   <Box sx={{ textAlign: 'center', mb: 4 }}>
@@ -819,10 +819,10 @@ const LoginPage: React.FC = () => {
                     >
                       <HealthAndSafety sx={{ fontSize: 40, color: 'white' }} />
                     </Box>
-                    <Typography 
-                      variant="h4" 
-                      component="h1" 
-                      fontWeight="bold" 
+                    <Typography
+                      variant="h4"
+                      component="h1"
+                      fontWeight="bold"
                       color="primary.main"
                       gutterBottom
                     >
@@ -835,9 +835,9 @@ const LoginPage: React.FC = () => {
 
                   <Box component="form" onSubmit={handleLogin} sx={{ mt: 1 }}>
                     {error && (
-                      <Alert 
-                        severity="error" 
-                        sx={{ 
+                      <Alert
+                        severity="error"
+                        sx={{
                           mb: 3,
                           borderRadius: 2,
                           border: '1px solid',
@@ -918,7 +918,7 @@ const LoginPage: React.FC = () => {
                       <Grid item xs>
                         <FormControlLabel
                           control={
-                            <Checkbox 
+                            <Checkbox
                               checked={rememberMe}
                               onChange={(e) => setRememberMe(e.target.checked)}
                               color="primary"
@@ -928,16 +928,17 @@ const LoginPage: React.FC = () => {
                         />
                       </Grid>
                       <Grid item>
-                        <Typography 
-                          variant="body2" 
+                        <Typography
+                          variant="body2"
                           color="primary.main"
-                          sx={{ 
+                          sx={{
                             cursor: 'pointer',
                             fontWeight: 500,
                             '&:hover': {
                               textDecoration: 'underline'
                             }
                           }}
+                          onClick={() => navigate('/forgot-password')}
                         >
                           Forgot Password?
                         </Typography>
@@ -985,7 +986,7 @@ const LoginPage: React.FC = () => {
                           component="span"
                           variant="body2"
                           color="primary.main"
-                          sx={{ 
+                          sx={{
                             cursor: 'pointer',
                             fontWeight: 600,
                             '&:hover': {
@@ -1004,7 +1005,7 @@ const LoginPage: React.FC = () => {
             </Slide>
           </Grid>
         </Grid>
-                        
+
         {/* Footer */}
         <Fade in timeout={1000}>
           <Box sx={{ textAlign: 'center', mt: 6 }}>
