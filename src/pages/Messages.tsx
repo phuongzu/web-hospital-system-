@@ -31,6 +31,7 @@ interface Reaction {
 
 interface Message {
   _id: string;
+  clientTempId?: string;
   conversation_id?: string;
   sender_id: User | string;
   receiver_id: User | string;
@@ -44,6 +45,7 @@ interface Message {
   edited?: boolean;
   deleted?: boolean;
   deleted_for_me?: boolean;
+  deleted_for?: string[];
   reactions?: Reaction[];
   reactions_count?: number;
   _temp?: boolean;
@@ -462,7 +464,8 @@ const Messages: React.FC = () => {
         reject(new Error('Socket not connected'));
         return;
       }
-      socketRef.current.timeout(5000).emit('send_message', { ...data, tempId }, (err: any, res: any) => {
+      // Include clientTempId in the emit
+      socketRef.current.timeout(5000).emit('send_message', { ...data, clientTempId: tempId }, (err: any, res: any) => {
         if (err || !res?.success) {
           reject(new Error(err?.message || res?.error || 'Failed to send'));
         } else {
@@ -526,9 +529,12 @@ const Messages: React.FC = () => {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('✅ Socket connected successfully');
       setIsSocketConnected(true);
+      socket.emit('join_user', id);
+
+      // ✅ THÊM: Rejoin conversation room nếu đang active
       if (selectedConvRef.current) {
+        console.log('🔄 Rejoining conversation after reconnect:', selectedConvRef.current._id);
         socket.emit('join_conversation', selectedConvRef.current._id);
       }
       processQueue();
@@ -545,7 +551,23 @@ const Messages: React.FC = () => {
     });
 
     // Socket event handlers using refs to avoid stale closures
-    socket.on('new_message', (data: any) => handleNewMessageRef.current(data));
+    socket.on('new_message', (data: any) => {
+      console.log('📨 [WEB] Received new_message event:', data.message);
+      handleNewMessageRef.current(data);
+    });
+
+    socket.on('message_sent_success', (data: any) => {
+      console.log('✅ [WEB] Message sent success ACK:', data);
+      setSending(false);
+      if (data.clientTempId) {
+        setMessages(prev => prev.map(m =>
+          (m._id === data.clientTempId || m.clientTempId === data.clientTempId)
+            ? { ...m, _id: data.messageId, clientTempId: undefined, _temp: false }
+            : m
+        ));
+      }
+    });
+
     socket.on('user_typing', (data: any) => handleTypingSocketRef.current(data));
     socket.on('messages_read_by_user', (data: any) => handleMessagesReadRef.current(data));
 
@@ -565,14 +587,14 @@ const Messages: React.FC = () => {
     });
 
     socket.on('message_deleted', (data: any) => {
-      if (deletingMessagesRef.current.has(data.messageId || data.message?._id)) {
-        deletingMessagesRef.current.delete(data.messageId || data.message?._id);
-        return;
+      const messageId = data.messageId || data.message?._id;
+      if (deletingMessagesRef.current.has(messageId)) {
+        deletingMessagesRef.current.delete(messageId);
+        // Even if we optimistically updated, ensure we reconcile with server data if provided
       }
 
       if (data.type === 'everyone') {
         const deletedMsg = data.message;
-        const messageId = deletedMsg?._id || data.messageId;
         setMessages(prev =>
           prev.map(m => {
             if (m._id !== messageId) return m;
@@ -581,38 +603,15 @@ const Messages: React.FC = () => {
               : { ...m, deleted: true, message: 'This message was deleted', reactions: [] };
           })
         );
-        if (selectedConvRef.current?.last_message?._id === messageId) {
-          setConversations(prev =>
-            prev.map(c =>
-              c._id === data.conversationId
-                ? {
-                  ...c,
-                  last_message: {
-                    _id: messageId,
-                    message: 'This message was deleted',
-                    message_type: 'text',
-                    deleted: true,
-                    timestamp: new Date().toISOString(),
-                  } as Message,
-                }
-                : c
-            )
-          );
-        }
       } else if (data.type === 'me') {
-        const messageId = data.messageId;
-        setMessages(prev =>
-          prev.map(m => {
-            if (m._id !== messageId) return m;
-            return {
-              ...m,
-              deleted_for_me: true,
-              message: 'This message was deleted',
-              message_type: 'text',
-              reactions: [],
-            };
-          })
-        );
+        const userId = data.userId;
+        const currentUserId = getDoctorId();
+
+        if (userId === currentUserId) {
+          setMessages(prev => prev.map(m =>
+            m._id === messageId ? { ...m, deleted_for_me: true, deleted_for: data.message?.deleted_for || [userId] } : m
+          ));
+        }
       }
     });
 
@@ -629,22 +628,38 @@ const Messages: React.FC = () => {
     });
 
     socket.on('message_sent_success', (res: any) => {
-      if (res.messageId && res.tempId) {
-        setMessages(prev =>
-          prev.map(m => m._id === res.tempId ? { ...m, _id: res.messageId, _temp: false } : m)
-        );
-        pendingMessagesRef.current.add(res.messageId);
+      // ✅ [WEB FIX] Reset sending state regardless of match, for UI responsiveness
+      setSending(false);
+
+      if (res.clientTempId) {
+        setMessages(prev => {
+          const hasBeenReplaced = prev.some(m =>
+            m._id === res.messageId && !m._temp
+          );
+          if (!hasBeenReplaced) {
+            return prev.map(m =>
+              (m.clientTempId === res.clientTempId || m._id === res.clientTempId)
+                ? { ...m, _id: res.messageId, clientTempId: undefined, _temp: false }
+                : m
+            );
+          }
+          return prev;
+        });
       }
     });
 
+
+
     socket.on('message_error', (err: any) => {
-      if (err.tempId) {
-        setMessages(prev => prev.map(m => m._id === err.tempId ? { ...m, _failed: true } : m));
+      setSending(false); // ✅ Reset sending state on error
+      if (err.tempId || err.clientTempId) {
+        const tid = err.tempId || err.clientTempId;
+        setMessages(prev => prev.map(m => (m._id === tid || m.clientTempId === tid) ? { ...m, _failed: true } : m));
       }
     });
 
     return socket;
-  }, [processQueue]);
+  }, [doctorId, SOCKET_URL]); // ✅ Stabilize: only re-create if user or URL changes
 
   // ─── Socket Event Handlers (using refs) ─────────────────────────────────────
 
@@ -670,49 +685,56 @@ const Messages: React.FC = () => {
     );
   }, [doctorId]);
 
+  // SAU — chỉ skip nếu đã có clientTempId match (tin mình vừa gửi qua socket)
+  // THAY handleNewMessage trong web
   const handleNewMessage = useCallback((rawMsg: any) => {
     if (!rawMsg) return;
+
     const convId = rawMsg.conversationId || rawMsg.conversation_id;
-
-    if (pendingMessagesRef.current.has(rawMsg._id)) {
-      pendingMessagesRef.current.delete(rawMsg._id);
-      return;
-    }
-
-    const isDeletedForMe = rawMsg.deleted_for?.includes(doctorId);
+    const active = selectedConvRef.current;
 
     const msg: Message = {
       ...rawMsg,
       _id: rawMsg._id || `msg_${Date.now()}`,
       conversation_id: convId,
-      message: isDeletedForMe ? 'This message was deleted' : (rawMsg.message || ''),
-      message_type: isDeletedForMe ? 'text' : (rawMsg.message_type || 'text'),
       timestamp: rawMsg.timestamp || new Date().toISOString(),
-      reactions: isDeletedForMe ? [] : (rawMsg.reactions || []),
-      deleted_for_me: isDeletedForMe,
+      reactions: rawMsg.reactions || [],
     };
 
-    const active = selectedConvRef.current;
     updateConversationLastMessage(convId, msg);
+
+    // ✅ [WEB FIX] Always reset sending state if clientTempId matches,
+    // even if we've switched conversations.
+    if (rawMsg.clientTempId) {
+      setSending(false);
+    }
 
     if (active?._id === convId) {
       setMessages(prev => {
-        if (prev.some(m => m._id === msg._id)) return prev;
-        const senderId = getSenderId(msg.sender_id);
-        if (senderId === doctorId) {
-          const tempIndex = prev.findIndex(m => m._temp && m.message === msg.message);
-          if (tempIndex !== -1) {
-            const newMessages = [...prev];
-            newMessages[tempIndex] = msg;
-            return newMessages;
+        // ✅ replace temp msg if found
+        if (rawMsg.clientTempId) {
+          const idx = prev.findIndex(m =>
+            m.clientTempId === rawMsg.clientTempId ||
+            m._id === rawMsg.clientTempId
+          );
+          if (idx !== -1) {
+            const updated = [...prev];
+            updated[idx] = { ...msg, clientTempId: undefined, _temp: false };
+            return updated;
           }
+        }
+        // ✅ [LOGIC FIX] Only skip if the exact ID exists AND it is NOT a temp message
+        if (prev.some(m => m._id === msg._id && !m._temp)) {
+          return prev;
         }
         return [...prev, msg];
       });
+
       markAsReadAPI(convId);
       debouncedScrollToBottom();
     }
   }, [doctorId, markAsReadAPI, debouncedScrollToBottom, updateConversationLastMessage]);
+
 
   // Update refs when handlers change
   useEffect(() => {
@@ -724,15 +746,22 @@ const Messages: React.FC = () => {
   // ─── Initialize ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!authChecked) return;
-    if (authError) return;
+    if (authChecked && !authError && !socketRef.current) {
+      connectSocket();
+      fetchConversations(); // Called once on init
 
-    fetchConversations();
-    connectSocket();
+      const queueInterval = setInterval(processQueue, 3000);
+      return () => clearInterval(queueInterval);
+    }
+  }, [authChecked, authError, connectSocket, fetchConversations, processQueue]);
 
-    const queueInterval = setInterval(processQueue, 3000);
-    return () => clearInterval(queueInterval);
-  }, [authChecked, authError, fetchConversations, connectSocket, processQueue]);
+  // ✅ NEW: Rejoin room when selectedConv changes
+  useEffect(() => {
+    if (selectedConv && socketRef.current?.connected) {
+      socketRef.current.emit('join_conversation', selectedConv._id);
+      console.log('📡 Joined conversation room:', selectedConv._id);
+    }
+  }, [selectedConv]);
 
   useEffect(() => {
     if (selectedConv) {
@@ -867,8 +896,10 @@ const Messages: React.FC = () => {
 
     const text = input.trim();
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
     const tempMsg: Message = {
       _id: tempId,
+      clientTempId: tempId,
       conversation_id: selectedConv._id,
       sender_id: { _id: doctorId!, name: 'You', role: 'doctor' },
       receiver_id: selectedConv.participant,
@@ -890,49 +921,93 @@ const Messages: React.FC = () => {
       receiverId: selectedConv.participant._id,
       message: text,
       messageType: 'text',
+      clientTempId: tempId,
     };
 
-    try {
-      const result = await sendViaSocket(tempId, msgData);
-      setMessages(prev =>
-        prev.map(m => m._id === tempId ? { ...m, _id: result.messageId, _temp: false } : m)
-      );
-    } catch (error) {
-      console.error('Failed to send via socket, adding to queue:', error);
-      messageQueueRef.current.set(tempId, { message: tempMsg, data: msgData, retries: 0 });
+    // ✅ Fallback timeout in case events are lost/blocked (12s)
+    const fallbackTimeout = setTimeout(() => {
+      setSending(prev => {
+        if (prev) console.warn('⏰ handleSendText fallback timeout triggered');
+        return false;
+      });
+    }, 12000);
 
-      // REST fallback
-      try {
-        const token = getAuthToken();
-        if (token) {
-          const response = await fetch(`${API_BASE_URL}/messages/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              receiver_id: selectedConv.participant._id,
-              message: text,
-              message_type: 'text',
-            }),
-          });
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data?.message?._id) {
-              setMessages(prev =>
-                prev.map(m => m._id === tempId ? { ...m, _id: data.data.message._id, _temp: false } : m)
-              );
-              pendingMessagesRef.current.add(data.data.message._id);
-              messageQueueRef.current.delete(tempId);
+    // ✅ KHÔNG dùng try/finally để set sending=false
+    // Để socket events (new_message hoặc message_sent_success) xử lý
+    try {
+      if (socketRef.current?.connected) {
+        // Dùng timeout emit để detect failure
+        socketRef.current.timeout(8000).emit(
+          'send_message',
+          { ...msgData, clientTempId: tempId },
+          (err: any, res: any) => {
+            if (err || !res?.success) {
+              console.warn('Socket send failed, trying REST');
+              sendViaRest(tempId, text, msgData);
+            } else {
+              // ✅ [WEB FIX] Resolve individual message bubble immediately on Socket ACK
+              setMessages(prev => prev.map(m =>
+                (m.clientTempId === tempId || m._id === tempId)
+                  ? { ...m, _id: res.messageId || res.data?._id, clientTempId: undefined, _temp: false }
+                  : m
+              ));
+              setSending(false);
+              clearTimeout(fallbackTimeout);
             }
           }
-        }
-      } catch (restError) {
-        console.error('REST fallback failed:', restError);
+        );
+      } else {
+        await sendViaRest(tempId, text, msgData);
+        clearTimeout(fallbackTimeout);
       }
-    } finally {
+    } catch (error) {
+      console.error('Send failed:', error);
+      setMessages(prev => prev.filter(m => m._id !== tempId));
       setSending(false);
+      clearTimeout(fallbackTimeout);
     }
   };
 
+  // Helper tách riêng
+  const sendViaRest = async (tempId: string, text: string, msgData: any) => {
+    try {
+      const token = getAuthToken();
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/messages/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          receiver_id: msgData.receiverId,
+          message: text,
+          message_type: 'text',
+          clientTempId: tempId,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // ✅ [WEB FIX] Robust property extraction
+        const savedMsg = result.data?.message || result.data;
+        
+        if (result.success && savedMsg?._id) {
+          setMessages(prev => prev.map(m =>
+            (m._id === tempId || m.clientTempId === tempId)
+              ? { ...savedMsg, clientTempId: undefined, _temp: false }
+              : m
+          ));
+          setSending(false);
+          console.log('✅ Send via REST success, bubble resolved');
+        }
+      } else {
+        setMessages(prev => prev.filter(m => m._id !== tempId));
+        setSending(false);
+      }
+    } catch {
+      setMessages(prev => prev.filter(m => m._id !== tempId));
+      setSending(false);
+    }
+  };
   // ─── Send File ──────────────────────────────────────────────────────────────
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -969,6 +1044,7 @@ const Messages: React.FC = () => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('receiver_id', selectedConv.participant._id);
+    formData.append('clientTempId', tempId);
     if (selectedConv.medical_record_id) {
       formData.append('medical_record_id', selectedConv.medical_record_id.toString());
     }
@@ -1252,7 +1328,9 @@ const Messages: React.FC = () => {
 
   const MessageBubble = ({ msg }: { msg: Message }) => {
     const isMe = getSenderId(msg.sender_id) === doctorId;
-    const isDeletedForMe = msg.deleted_for_me === true;
+    const currentUserId = doctorId;
+    const isDeletedForMe = msg.deleted_for_me === true ||
+      (Array.isArray(msg.deleted_for) && msg.deleted_for.includes(currentUserId || ''));
     const isDeleted = msg.deleted === true || isDeletedForMe;
     const isHovered = hoveredMessageId === msg._id;
 
@@ -1285,13 +1363,13 @@ const Messages: React.FC = () => {
                   title="Edit message"
                 />
               )}
-              {isMe && (
+              {isMe && !msg.read && (
                 <ActionButton
                   icon="delete_sweep"
                   onClick={() => handleDeleteMessage(msg._id, 'everyone')}
                   color="text-rose-400"
                   hoverColor="hover:text-rose-600 hover:bg-rose-50"
-                  title={msg.read ? 'Delete for everyone (already seen)' : 'Unsend message'}
+                  title="Delete for everyone"
                 />
               )}
               {!isDeletedForMe && (
@@ -1324,7 +1402,7 @@ const Messages: React.FC = () => {
 
           {/* Message Bubble */}
           <div
-            className={`shadow-sm transition-all ${msg.message_type === 'image' && !isDeleted
+            className={`shadow-sm transition-all ${msg._temp ? 'opacity-70 grayscale-[20%]' : ''} ${msg.message_type === 'image' && !isDeleted
               ? 'rounded-2xl p-1 bg-white border border-slate-100'
               : `px-4 py-3 rounded-[1.5rem] ${isDeleted
                 ? 'bg-slate-100 text-slate-400 border border-slate-200 italic'
@@ -1354,7 +1432,6 @@ const Messages: React.FC = () => {
                   <p className="text-[14px] font-medium leading-relaxed whitespace-pre-wrap">
                     {msg.message}
                     {msg.edited && <span className="text-[10px] opacity-60 ml-2 italic">(edited)</span>}
-                    {msg._temp && <span className="text-[10px] opacity-60 ml-2">(sending…)</span>}
                   </p>
                 )}
                 {msg.message_type === 'image' && (
