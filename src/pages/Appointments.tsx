@@ -68,12 +68,7 @@ const COMMON_INSTRUCTIONS = [
   'Do not crush or chew', 'Apply to affected area',
 ];
 
-const FOLLOWUP_OPTIONS = [
-  { label: '1 week', days: 7 },
-  { label: '2 weeks', days: 14 },
-  { label: '1 month', days: 30 },
-  { label: '3 months', days: 90 },
-];
+
 
 // ─── Avatar Component ───────────────────────────────────────────────────────────
 
@@ -162,7 +157,7 @@ const Appointments: React.FC = () => {
   // Modals & Panels
   const [showConsultModal, setShowConsultModal]   = useState(false);
   const [showDetailModal, setShowDetailModal]     = useState(false);
-  const [showFollowUpModal, setShowFollowUpModal] = useState(false);
+
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
 
   // Patient Context Panel
@@ -176,12 +171,7 @@ const Appointments: React.FC = () => {
   const [doctorNotes, setDoctorNotes] = useState<Record<string, string>>({});
   const [savingNote, setSavingNote]   = useState(false);
 
-  // Follow-up scheduling
-  const [lastCompletedAppt, setLastCompletedAppt]   = useState<Appointment | null>(null);
-  const [lastConsultationId, setLastConsultationId] = useState<string | null>(null);
-  const [followUpOption, setFollowUpOption]         = useState<number | null>(null);
-  const [followUpCustomDate, setFollowUpCustomDate] = useState('');
-  const [schedulingFollowUp, setSchedulingFollowUp] = useState(false);
+
 
   // Consult form
   const [consultForm, setConsultForm] = useState({
@@ -435,11 +425,7 @@ const Appointments: React.FC = () => {
       if (data.success) {
         await handleAction(selectedAppointment._id, 'complete');
         setShowConsultModal(false);
-        setLastCompletedAppt(selectedAppointment);
-        setLastConsultationId(data.data?._id || null);
-        setFollowUpOption(null);
-        setFollowUpCustomDate('');
-        setShowFollowUpModal(true);
+        // Removed follow-up modal trigger
       } else {
         alert('Failed to start consultation: ' + (data.message || 'Unknown error'));
       }
@@ -1465,68 +1451,7 @@ const Appointments: React.FC = () => {
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════
-            FOLLOW-UP SCHEDULING MODAL
-        ══════════════════════════════════════════════════════════════════ */}
-        {showFollowUpModal && lastCompletedAppt && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-            <div className="bg-white dark:bg-[#102023] rounded-2xl shadow-2xl max-w-sm w-full border border-slate-100 dark:border-[#1e3438]">
-              <div className="p-6">
-                <div className="flex justify-center mb-4">
-                  <div className="size-14 rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-2xl text-emerald-600 dark:text-emerald-400">event_available</span>
-                  </div>
-                </div>
 
-                <h2 className="text-base font-black text-slate-900 dark:text-white text-center mb-1">Schedule Follow-up?</h2>
-                <p className="text-xs text-slate-400 text-center mb-5">
-                  Consultation completed for <span className="font-bold text-slate-600 dark:text-slate-300">{lastCompletedAppt.user_id?.name}</span>.
-                </p>
-
-                <div className="grid grid-cols-4 gap-1.5 mb-3">
-                  {FOLLOWUP_OPTIONS.map(opt => (
-                    <button
-                      key={opt.days}
-                      onClick={() => { setFollowUpOption(opt.days); setFollowUpCustomDate(''); }}
-                      className={`py-2.5 rounded-xl border text-xs font-bold transition-all ${
-                        followUpOption === opt.days && !followUpCustomDate
-                          ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
-                          : 'border-slate-200 dark:border-[#224449] text-slate-500 dark:text-slate-400 hover:border-primary hover:text-primary'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">Or pick a specific date</label>
-                  <input
-                    type="date"
-                    className="w-full rounded-xl border border-slate-200 dark:border-[#224449] bg-slate-50 dark:bg-[#1a2c2f] text-slate-800 dark:text-white px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-all"
-                    value={followUpCustomDate}
-                    min={new Date().toISOString().split('T')[0]}
-                    onChange={e => { setFollowUpCustomDate(e.target.value); setFollowUpOption(null); }}
-                  />
-                </div>
-
-                {(followUpOption || followUpCustomDate) && (
-                  <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 mb-4 text-xs text-center">
-                    <span className="material-symbols-outlined text-xs text-primary align-middle mr-1">event</span>
-                    <span className="text-slate-600 dark:text-slate-300">
-                      Follow-up on <strong>{(() => {
-                        const d = new Date();
-                        if (followUpCustomDate) return new Date(followUpCustomDate).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'long' });
-                        d.setDate(d.getDate() + (followUpOption ?? 14));
-                        return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'long' });
-                      })()}</strong> at <strong>{lastCompletedAppt.time_slot}</strong>
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
       </div>
     </div>
