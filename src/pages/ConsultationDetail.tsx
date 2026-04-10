@@ -69,23 +69,23 @@ interface Toast { id: number; message: string; type: 'success' | 'error' | 'info
 // ─────────────────────────────────────────────────────────────
 const API = (process.env.REACT_APP_API_BASE_URL || 'http://localhost:3000/api');
 const getDoctorId = () => localStorage.getItem('doctorId');
-const getToken    = () => localStorage.getItem('token');
+const getToken = () => localStorage.getItem('token');
 const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` });
 
-const DOSAGES      = ["1 tablet","2 tablets","3 tablets","1 capsule","2 capsules","5ml","10ml","15ml","Apply thinly","1 drop","2 drops","1 puff","2 puffs"];
-const DURATIONS    = ["1 day","3 days","5 days","7 days","10 days","14 days","21 days","1 month","2 months","3 months","Until finished","Ongoing","As directed"];
-const INSTRUCTIONS = ["After meals","Before meals","With food","On empty stomach","Before sleep","Once daily","Twice daily","Three times daily","Every 8 hours","Every 12 hours","As needed","With plenty of water"];
+const DOSAGES = ["1 tablet", "2 tablets", "3 tablets", "1 capsule", "2 capsules", "5ml", "10ml", "15ml", "Apply thinly", "1 drop", "2 drops", "1 puff", "2 puffs"];
+const DURATIONS = ["1 day", "3 days", "5 days", "7 days", "10 days", "14 days", "21 days", "1 month", "2 months", "3 months", "Until finished", "Ongoing", "As directed"];
+const INSTRUCTIONS = ["After meals", "Before meals", "With food", "On empty stomach", "Before sleep", "Once daily", "Twice daily", "Three times daily", "Every 8 hours", "Every 12 hours", "As needed", "With plenty of water"];
 
 // ─────────────────────────────────────────────────────────────
 // STEP CONFIG
 // ─────────────────────────────────────────────────────────────
 const STEP_CFG: Record<string, { label: string; dot: string; badge: string; track: string }> = {
-  pending:       { label: 'Pending',         dot: 'bg-slate-300',  badge: 'bg-slate-100 text-slate-500 border-slate-200',   track: 'border-slate-300 text-slate-400' },
-  'in-progress': { label: 'In Progress',     dot: 'bg-sky-400',    badge: 'bg-sky-50 text-sky-700 border-sky-200',          track: 'border-sky-400 text-sky-600 bg-sky-50' },
-  scheduled:     { label: 'Scheduled',       dot: 'bg-violet-400', badge: 'bg-violet-50 text-violet-700 border-violet-200', track: 'border-violet-400 text-violet-600 bg-violet-50' },
-  completed:     { label: 'Awaiting Review', dot: 'bg-amber-400',  badge: 'bg-amber-50 text-amber-700 border-amber-200',    track: 'border-amber-400 text-amber-600 bg-amber-50' },
-  approved:      { label: 'Approved',        dot: 'bg-teal-500',   badge: 'bg-teal-50 text-teal-700 border-teal-200',       track: 'border-teal-500 text-teal-600 bg-teal-50' },
-  rejected:      { label: 'Revision',        dot: 'bg-rose-400',   badge: 'bg-rose-50 text-rose-700 border-rose-200',       track: 'border-rose-400 text-rose-600 bg-rose-50' },
+  pending: { label: 'Pending', dot: 'bg-slate-300', badge: 'bg-slate-100 text-slate-500 border-slate-200', track: 'border-slate-300 text-slate-400' },
+  'in-progress': { label: 'In Progress', dot: 'bg-sky-400', badge: 'bg-sky-50 text-sky-700 border-sky-200', track: 'border-sky-400 text-sky-600 bg-sky-50' },
+  scheduled: { label: 'Scheduled', dot: 'bg-violet-400', badge: 'bg-violet-50 text-violet-700 border-violet-200', track: 'border-violet-400 text-violet-600 bg-violet-50' },
+  completed: { label: 'Awaiting Review', dot: 'bg-amber-400', badge: 'bg-amber-50 text-amber-700 border-amber-200', track: 'border-amber-400 text-amber-600 bg-amber-50' },
+  approved: { label: 'Approved', dot: 'bg-teal-500', badge: 'bg-teal-50 text-teal-700 border-teal-200', track: 'border-teal-500 text-teal-600 bg-teal-50' },
+  rejected: { label: 'Revision', dot: 'bg-rose-400', badge: 'bg-rose-50 text-rose-700 border-rose-200', track: 'border-rose-400 text-rose-600 bg-rose-50' },
 };
 const stepCfg = (s: string) => STEP_CFG[s] ?? STEP_CFG.pending;
 
@@ -119,11 +119,11 @@ const Btn = React.forwardRef<HTMLButtonElement, BtnProps>(({
 }, ref) => {
   const v = {
     primary: 'bg-sky-600 text-white hover:bg-sky-700 border border-sky-600',
-    teal:    'bg-teal-600 text-white hover:bg-teal-700 border border-teal-600',
-    amber:   'bg-amber-500 text-white hover:bg-amber-600 border border-amber-500',
+    teal: 'bg-teal-600 text-white hover:bg-teal-700 border border-teal-600',
+    amber: 'bg-amber-500 text-white hover:bg-amber-600 border border-amber-500',
     outline: 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-300',
-    ghost:   'bg-transparent text-slate-600 hover:bg-slate-100 border border-transparent',
-    danger:  'bg-rose-600 text-white hover:bg-rose-700 border border-rose-600',
+    ghost: 'bg-transparent text-slate-600 hover:bg-slate-100 border border-transparent',
+    danger: 'bg-rose-600 text-white hover:bg-rose-700 border border-rose-600',
   }[variant];
   const s = { xs: 'px-2.5 py-1 text-[11px] min-h-[26px]', sm: 'px-3 py-1.5 text-xs min-h-[30px]', md: 'px-4 py-2 text-sm min-h-[36px]' }[size];
   return (
@@ -200,11 +200,10 @@ const Modal: React.FC<{
 const Toasts: React.FC<{ items: Toast[]; onDismiss: (id: number) => void }> = ({ items, onDismiss }) => (
   <div className="fixed top-4 right-4 z-[60] flex flex-col gap-2 pointer-events-none">
     {items.map(t => (
-      <div key={t.id} className={`pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-xl shadow-xl border text-sm min-w-[280px] max-w-sm animate-[toastIn_0.2s_ease-out] ${
-        t.type === 'error'   ? 'bg-rose-50 border-rose-200 text-rose-800' :
+      <div key={t.id} className={`pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-xl shadow-xl border text-sm min-w-[280px] max-w-sm animate-[toastIn_0.2s_ease-out] ${t.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' :
         t.type === 'success' ? 'bg-teal-50 border-teal-200 text-teal-800' :
-                               'bg-sky-50 border-sky-200 text-sky-800'
-      }`}>
+          'bg-sky-50 border-sky-200 text-sky-800'
+        }`}>
         <span className="mt-0.5 text-base shrink-0">{t.type === 'error' ? '⚠' : t.type === 'success' ? '✓' : 'ℹ'}</span>
         <span className="flex-1 font-medium">{t.message}</span>
         <button onClick={() => onDismiss(t.id)} className="opacity-50 hover:opacity-100 text-lg leading-none">×</button>
@@ -233,39 +232,29 @@ const AppointmentPanel: React.FC<{
 
   // No appointment yet
   if (!apptStatus?.appointment) {
-    return (
-      <div className="mt-3 rounded-lg border-2 border-dashed border-slate-200 p-3 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold text-slate-600">No appointment scheduled</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Schedule a physical visit for this step</p>
-        </div>
-        <Btn size="xs" variant="outline" onClick={onScheduleVisit}>Schedule Visit</Btn>
-      </div>
-    );
+    return null;
   }
 
   const { appointment, doctorAction } = apptStatus;
   const apptDate = new Date(appointment.appointment_date);
-  const isToday  = apptDate.toDateString() === new Date().toDateString();
+  const isToday = apptDate.toDateString() === new Date().toDateString();
   const isConfirmed = appointment.status === 'confirmed';
 
   return (
-    <div className={`mt-3 rounded-lg border p-3 space-y-2.5 ${
-      doctorAction === 'start_examination' ? 'border-teal-300 bg-teal-50/60' :
-      doctorAction === 'examination_done'  ? 'border-slate-200 bg-slate-50' :
-                                             'border-violet-200 bg-violet-50/40'
-    }`}>
+    <div className={`mt-3 rounded-lg border p-3 space-y-2.5 ${doctorAction === 'start_examination' ? 'border-teal-300 bg-teal-50/60' :
+      doctorAction === 'examination_done' ? 'border-slate-200 bg-slate-50' :
+        'border-violet-200 bg-violet-50/40'
+      }`}>
       {/* Appointment info row */}
       <div className="flex items-start justify-between gap-2">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Appointment</span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide ${
-              appointment.status === 'confirmed' ? 'bg-teal-100 text-teal-700' :
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide ${appointment.status === 'confirmed' ? 'bg-teal-100 text-teal-700' :
               appointment.status === 'completed' ? 'bg-slate-100 text-slate-600' :
-              appointment.status === 'cancelled' ? 'bg-rose-100 text-rose-700' :
-                                                   'bg-violet-100 text-violet-700'
-            }`}>{appointment.status}</span>
+                appointment.status === 'cancelled' ? 'bg-rose-100 text-rose-700' :
+                  'bg-violet-100 text-violet-700'
+              }`}>{appointment.status}</span>
             {isToday && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 uppercase tracking-wide">Today</span>}
           </div>
           <p className="text-xs font-semibold text-slate-800">
@@ -374,8 +363,8 @@ const PrescriptionDisplay: React.FC<{ step: TreatmentStep }> = ({ step }) => {
         {rxList.map((rx, i) => (
           <div key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="text-xs font-semibold text-slate-800">{rx.name}</span>
-            {rx.dosage       && <span className="text-xs text-slate-500">{rx.dosage}</span>}
-            {rx.duration     && <span className="text-xs text-slate-400">· {rx.duration}</span>}
+            {rx.dosage && <span className="text-xs text-slate-500">{rx.dosage}</span>}
+            {rx.duration && <span className="text-xs text-slate-400">· {rx.duration}</span>}
             {rx.instructions && <span className="text-xs text-slate-400 italic">· {rx.instructions}</span>}
           </div>
         ))}
@@ -404,37 +393,37 @@ const PatientReportBox: React.FC<{ step: TreatmentStep }> = ({ step }) => {
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────
 const ConsultationDetail: React.FC = () => {
-  const { id }   = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const doctorId = getDoctorId();
 
   // ── Core state ────────────────────────────────────────────
-  const [consultation, setConsultation]     = useState<Consultation | null>(null);
-  const [loading, setLoading]               = useState(true);
-  const [error, setError]                   = useState('');
-  const [toasts, setToasts]                 = useState<Toast[]>([]);
-  const [busy, setBusy]                     = useState(false);
+  const [consultation, setConsultation] = useState<Consultation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [busy, setBusy] = useState(false);
   const [availableDrugs, setAvailableDrugs] = useState<Drug[]>([]);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
-  const [slotsLoading, setSlotsLoading]     = useState(false);
+  const [slotsLoading, setSlotsLoading] = useState(false);
 
   // Appointment statuses keyed by stepNumber
-  const [stepApptStatuses, setStepApptStatuses]   = useState<Record<number, StepAppointmentStatus>>({});
-  const [loadingApptFor, setLoadingApptFor]         = useState<number | null>(null);
-  const [arrivalBusy, setArrivalBusy]               = useState<number | null>(null);
+  const [stepApptStatuses, setStepApptStatuses] = useState<Record<number, StepAppointmentStatus>>({});
+  const [loadingApptFor, setLoadingApptFor] = useState<number | null>(null);
+  const [arrivalBusy, setArrivalBusy] = useState<number | null>(null);
   // Track steps where Start Examination was already clicked → hide the button
   const [examinationStarted, setExaminationStarted] = useState<Set<number>>(new Set());
 
   // ── Which step is being acted on ─────────────────────────
-  const [reviewingStep,    setReviewingStep]    = useState<TreatmentStep | null>(null);
-  const [editingStep,      setEditingStep]      = useState<TreatmentStep | null>(null);
-  const [schedulingStep,   setSchedulingStep]   = useState<TreatmentStep | null>(null);
+  const [reviewingStep, setReviewingStep] = useState<TreatmentStep | null>(null);
+  const [editingStep, setEditingStep] = useState<TreatmentStep | null>(null);
+  const [schedulingStep, setSchedulingStep] = useState<TreatmentStep | null>(null);
   const [completingReStep, setCompletingReStep] = useState<TreatmentStep | null>(null);
 
   // ── Modal visibility ──────────────────────────────────────
-  const [showStepModal,       setShowStepModal]      = useState(false);
-  const [showReviewModal,     setShowReviewModal]     = useState(false);
-  const [showScheduleModal,   setShowScheduleModal]   = useState(false);
+  const [showStepModal, setShowStepModal] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showCompleteReModal, setShowCompleteReModal] = useState(false);
 
   // ── Form state ────────────────────────────────────────────
@@ -455,7 +444,7 @@ const ConsultationDetail: React.FC = () => {
     additionalStepDescription: '',
   });
 
-  const [scheduleForm, setScheduleForm]     = useState({ date: '', time: '', notes: '' });
+  const [scheduleForm, setScheduleForm] = useState({ date: '', time: '', notes: '' });
   const [completeReForm, setCompleteReForm] = useState({
     doctorNotes: '',
     outcome: 'all_good' as 'all_good' | 'needs_followup',
@@ -471,7 +460,7 @@ const ConsultationDetail: React.FC = () => {
   const [customMode, setCustomMode] = useState<Record<string, boolean>>({});
 
   // ── Refs ──────────────────────────────────────────────────
-  const toastId    = useRef(0);
+  const toastId = useRef(0);
   const pollTimers = useRef<Record<number, NodeJS.Timeout>>({});
 
   // ─────────────────────────────────────────────────────────
@@ -490,7 +479,7 @@ const ConsultationDetail: React.FC = () => {
     if (!doctorId || !id) return;
     if (!quiet) setLoading(true);
     try {
-      const res  = await fetch(`${API}/doctors/${doctorId}/consultations`);
+      const res = await fetch(`${API}/doctors/${doctorId}/consultations`);
       const data = await res.json();
       if (data.success) {
         const found = (data.data as Consultation[]).find(c => c._id === id);
@@ -498,7 +487,7 @@ const ConsultationDetail: React.FC = () => {
           found.treatment_plan.sort((a, b) => a.stepNumber - b.stepNumber);
           setConsultation(found);
           found.treatment_plan
-            .filter(s => s.status === 'scheduled' || s.isReExaminationVisit || s.reExaminationScheduled)
+            .filter(s => s.status === 'scheduled' || s.status === 'in-progress' || s.isReExaminationVisit || s.reExaminationScheduled)
             .forEach(s => fetchStepApptStatus(s.stepNumber, true));
         } else {
           setError('Consultation not found');
@@ -515,7 +504,7 @@ const ConsultationDetail: React.FC = () => {
     if (!id) return;
     if (!silent) setLoadingApptFor(stepNumber);
     try {
-      const res  = await fetch(
+      const res = await fetch(
         `${API}/doctors/consultations/${id}/steps/${stepNumber}/appointment-status`,
         { headers: authHeaders() }
       );
@@ -545,17 +534,17 @@ const ConsultationDetail: React.FC = () => {
 
   const fetchDrugs = useCallback(async () => {
     try {
-      const res  = await fetch(`${API}/doctors/drugs`);
+      const res = await fetch(`${API}/doctors/drugs`);
       const data = await res.json();
       if (data.success) setAvailableDrugs(data.data || []);
-    } catch {/* non-fatal */}
+    } catch {/* non-fatal */ }
   }, []);
 
   const fetchSlots = useCallback(async (date: string) => {
     if (!date) return;
     setSlotsLoading(true);
     try {
-      const res  = await fetch(`${API}/doctors/appointments/available-slots?date=${date}&doctorId=${doctorId}`, { headers: authHeaders() });
+      const res = await fetch(`${API}/doctors/appointments/available-slots?date=${date}&doctorId=${doctorId}`, { headers: authHeaders() });
       const data = await res.json();
       setAvailableSlots(data.success ? (data.data || []) : []);
     } catch {
@@ -597,6 +586,9 @@ const ConsultationDetail: React.FC = () => {
     s.title?.toLowerCase().includes('physical') ||
     s.title?.toLowerCase().includes('follow-up');
 
+  const isClinicStep = (s: TreatmentStep) =>
+    !!(s.isReExaminationVisit || s.reExaminationScheduled || s.needsReExamination || s.title?.toLowerCase()?.includes('re-ex') || s.title?.toLowerCase()?.includes('follow-up'));
+
   const formatDate = (d: string) => new Date(d).toLocaleDateString('en-GB', {
     weekday: 'short', day: '2-digit', month: 'short', year: 'numeric'
   });
@@ -621,7 +613,7 @@ const ConsultationDetail: React.FC = () => {
       if (reviewForm.nextAppointmentDate) {
         body.nextAppointmentDate = `${reviewForm.nextAppointmentDate}T${reviewForm.nextAppointmentTime}:00`;
       }
-      const res  = await fetch(`${API}/doctors/consultations/${id}/steps/${reviewingStep.stepNumber}/review`, {
+      const res = await fetch(`${API}/doctors/consultations/${id}/steps/${reviewingStep.stepNumber}/review`, {
         method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -641,9 +633,13 @@ const ConsultationDetail: React.FC = () => {
     if (!schedulingStep || !id || !scheduleForm.date || !scheduleForm.time) return;
     setBusy(true);
     try {
-      const res  = await fetch(`${API}/doctors/consultations/${id}/steps/${schedulingStep.stepNumber}/schedule-re-examination`, {
+      const res = await fetch(`${API}/doctors/consultations/${id}/steps/${schedulingStep.stepNumber}/schedule-re-examination`, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ ...scheduleForm, appointmentDateTime: `${scheduleForm.date}T${scheduleForm.time}:00` }),
+        body: JSON.stringify({
+          ...scheduleForm,
+          timeSlot: scheduleForm.time,
+          appointmentDateTime: `${scheduleForm.date}T${scheduleForm.time}:00`
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -664,7 +660,7 @@ const ConsultationDetail: React.FC = () => {
     if (!id) return;
     setArrivalBusy(step.stepNumber);
     try {
-      const res  = await fetch(`${API}/doctors/consultations/${id}/steps/${step.stepNumber}/confirm-arrival`, {
+      const res = await fetch(`${API}/doctors/consultations/${id}/steps/${step.stepNumber}/confirm-arrival`, {
         method: 'POST', headers: authHeaders(),
       });
       const data = await res.json();
@@ -682,118 +678,118 @@ const ConsultationDetail: React.FC = () => {
   };
 
   // ── Complete Examination: two paths depending on outcome ──────
-const handleCompleteReExamination = async () => {
-  if (!completingReStep || !id) return;
-  setBusy(true);
-  try {
-    // ── Step 1: Mark physical examination as done ──────────────
-    const completeRes = await fetch(
-      `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/complete-re-examination`,
-      {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ doctorNotes: completeReForm.doctorNotes }),
-      }
-    );
-    const completeData = await completeRes.json();
-    if (!completeData.success) {
-      toast(completeData.message || 'Failed to complete examination', 'error');
-      return;
-    }
-
-    if (completeReForm.outcome === 'all_good') {
-      // ── PATH A: No issues → approve step, close appointment ───
-      const reviewRes = await fetch(
-        `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/review`,
+  const handleCompleteReExamination = async () => {
+    if (!completingReStep || !id) return;
+    setBusy(true);
+    try {
+      // ── Step 1: Mark physical examination as done ──────────────
+      const completeRes = await fetch(
+        `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/complete-re-examination`,
         {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({
-            decision: 'approve_and_complete',
-            doctorNotes: completeReForm.doctorNotes,
-            requireFollowUp: false,
-            completeConsultation: false,
-          }),
+          body: JSON.stringify({ doctorNotes: completeReForm.doctorNotes }),
         }
       );
-      const reviewData = await reviewRes.json();
-      if (reviewData.success) {
-        toast('Examination completed & approved — no follow-up needed');
-        setShowCompleteReModal(false);
-        await fetchConsultation(true);
-        stopPolling(completingReStep.stepNumber);
-      } else {
-        toast('Completed. Please review the step manually.', 'info');
-        setShowCompleteReModal(false);
-        await fetchConsultation(true);
+      const completeData = await completeRes.json();
+      if (!completeData.success) {
+        toast(completeData.message || 'Failed to complete examination', 'error');
+        return;
       }
-    } else {
-      // ── PATH B: Issues found → approve current step + create new follow-up step
-      const validRx = completeReForm.followupPrescriptions.filter(p => p.medication.trim());
 
-      // FIXED: Đảm bảo format đúng cho medication, dosage, duration, instructions
-      const medicationString = validRx.length ? validRx.map(p => p.medication).join(' + ') : undefined;
-      
-      // Format: "Medication1: dosage1 | Medication2: dosage2"
-      const dosageString = validRx.length 
-        ? validRx.map(p => `${p.medication}: ${p.dosage}`).join(' | ') 
-        : undefined;
-      
-      const durationString = validRx.length 
-        ? validRx.map(p => `${p.medication}: ${p.duration}`).join(' | ') 
-        : undefined;
-      
-      const instructionsString = validRx.length 
-        ? validRx.map(p => `${p.medication}: ${p.instructions}`).join(' | ') 
-        : undefined;
-
-      const body: any = {
-        decision: 'approve_with_followup',
-        doctorNotes: completeReForm.doctorNotes,
-        requireFollowUp: true,
-        additionalStepTitle: completeReForm.followupTitle || `Follow-up: ${completingReStep.title}`,
-        additionalStepDescription: completeReForm.followupDescription || 'Additional treatment required based on examination findings.',
-        medication: medicationString,
-        dosage: dosageString,
-        duration: durationString,
-        instructions: instructionsString,
-        prescriptions: validRx,
-        isPhysicalVisit: completeReForm.followupIsPhysicalVisit,
-        completeConsultation: false,
-      };
-
-      console.log('Sending follow-up step data:', body); // Debug log
-
-      const reviewRes = await fetch(
-        `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/review`,
-        { 
-          method: 'POST', 
-          headers: authHeaders(), 
-          body: JSON.stringify(body) 
+      if (completeReForm.outcome === 'all_good') {
+        // ── PATH A: No issues → approve step, close appointment ───
+        const reviewRes = await fetch(
+          `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/review`,
+          {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+              decision: 'approve_and_complete',
+              doctorNotes: completeReForm.doctorNotes,
+              requireFollowUp: false,
+              completeConsultation: false,
+            }),
+          }
+        );
+        const reviewData = await reviewRes.json();
+        if (reviewData.success) {
+          toast('Examination completed & approved — no follow-up needed');
+          setShowCompleteReModal(false);
+          await fetchConsultation(true);
+          stopPolling(completingReStep.stepNumber);
+        } else {
+          toast('Completed. Please review the step manually.', 'info');
+          setShowCompleteReModal(false);
+          await fetchConsultation(true);
         }
-      );
-      
-      const reviewData = await reviewRes.json();
-      console.log('Review response:', reviewData); // Debug log
-      
-      if (reviewData.success) {
-        toast('Examination completed — follow-up step added');
-        setShowCompleteReModal(false);
-        await fetchConsultation(true);
-        stopPolling(completingReStep.stepNumber);
       } else {
-        toast(reviewData.message || 'Completed but failed to create follow-up', 'error');
-        setShowCompleteReModal(false);
-        await fetchConsultation(true);
+        // ── PATH B: Issues found → approve current step + create new follow-up step
+        const validRx = completeReForm.followupPrescriptions.filter(p => p.medication.trim());
+
+        // FIXED: Đảm bảo format đúng cho medication, dosage, duration, instructions
+        const medicationString = validRx.length ? validRx.map(p => p.medication).join(' + ') : undefined;
+
+        // Format: "Medication1: dosage1 | Medication2: dosage2"
+        const dosageString = validRx.length
+          ? validRx.map(p => `${p.medication}: ${p.dosage}`).join(' | ')
+          : undefined;
+
+        const durationString = validRx.length
+          ? validRx.map(p => `${p.medication}: ${p.duration}`).join(' | ')
+          : undefined;
+
+        const instructionsString = validRx.length
+          ? validRx.map(p => `${p.medication}: ${p.instructions}`).join(' | ')
+          : undefined;
+
+        const body: any = {
+          decision: 'approve_with_followup',
+          doctorNotes: completeReForm.doctorNotes,
+          requireFollowUp: true,
+          additionalStepTitle: completeReForm.followupTitle || `Follow-up: ${completingReStep.title}`,
+          additionalStepDescription: completeReForm.followupDescription || 'Additional treatment required based on examination findings.',
+          medication: medicationString,
+          dosage: dosageString,
+          duration: durationString,
+          instructions: instructionsString,
+          prescriptions: validRx,
+          isPhysicalVisit: completeReForm.followupIsPhysicalVisit,
+          completeConsultation: false,
+        };
+
+        console.log('Sending follow-up step data:', body); // Debug log
+
+        const reviewRes = await fetch(
+          `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/review`,
+          {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify(body)
+          }
+        );
+
+        const reviewData = await reviewRes.json();
+        console.log('Review response:', reviewData); // Debug log
+
+        if (reviewData.success) {
+          toast('Examination completed — follow-up step added');
+          setShowCompleteReModal(false);
+          await fetchConsultation(true);
+          stopPolling(completingReStep.stepNumber);
+        } else {
+          toast(reviewData.message || 'Completed but failed to create follow-up', 'error');
+          setShowCompleteReModal(false);
+          await fetchConsultation(true);
+        }
       }
+    } catch (error) {
+      console.error('Error completing examination:', error);
+      toast('Network error', 'error');
+    } finally {
+      setBusy(false);
     }
-  } catch (error) {
-    console.error('Error completing examination:', error);
-    toast('Network error', 'error');
-  } finally {
-    setBusy(false);
-  }
-};
+  };
 
   // Save (add or edit) a treatment step
   const handleSaveStep = async () => {
@@ -803,17 +799,17 @@ const handleCompleteReExamination = async () => {
       const validRx = stepForm.prescriptions.filter(p => p.medication.trim());
       const payload = {
         title: stepForm.title, description: stepForm.description,
-        medication:   validRx.map(p => p.medication).join(' + ') || undefined,
-        dosage:       validRx.map(p => `${p.medication}: ${p.dosage}`).join(' | ') || undefined,
-        duration:     validRx.map(p => `${p.medication}: ${p.duration}`).join(' | ') || undefined,
+        medication: validRx.map(p => p.medication).join(' + ') || undefined,
+        dosage: validRx.map(p => `${p.medication}: ${p.dosage}`).join(' | ') || undefined,
+        duration: validRx.map(p => `${p.medication}: ${p.duration}`).join(' | ') || undefined,
         instructions: validRx.map(p => `${p.medication}: ${p.instructions}`).join(' | ') || undefined,
         prescriptions: validRx,
         isPhysicalVisit: stepForm.isPhysicalVisit,
       };
-      const url  = editingStep
+      const url = editingStep
         ? `${API}/doctors/consultations/${id}/steps/${editingStep.stepNumber}`
         : `${API}/doctors/consultations/${id}/steps`;
-      const res  = await fetch(url, { method: editingStep ? 'PUT' : 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+      const res = await fetch(url, { method: editingStep ? 'PUT' : 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
       const data = await res.json();
       if (data.success) {
         toast(editingStep ? 'Step updated' : 'Step added');
@@ -831,7 +827,7 @@ const handleCompleteReExamination = async () => {
     if (!id) return;
     setBusy(true);
     try {
-      const res  = await fetch(`${API}/doctors/consultations/${id}/complete`, { method: 'POST', headers: authHeaders() });
+      const res = await fetch(`${API}/doctors/consultations/${id}/complete`, { method: 'POST', headers: authHeaders() });
       const data = await res.json();
       if (data.success) {
         toast('Case closed');
@@ -858,8 +854,8 @@ const handleCompleteReExamination = async () => {
   const openEditStep = (s: TreatmentStep) => {
     const rxList = (s.medication || '').split(' + ').filter(Boolean).map(med => ({
       medication: med,
-      dosage:       (s.dosage || '').split(' | ').find(p => p.startsWith(`${med}:`))?.split(':')[1]?.trim() || '',
-      duration:     (s.duration || '').split(' | ').find(p => p.startsWith(`${med}:`))?.split(':')[1]?.trim() || '',
+      dosage: (s.dosage || '').split(' | ').find(p => p.startsWith(`${med}:`))?.split(':')[1]?.trim() || '',
+      duration: (s.duration || '').split(' | ').find(p => p.startsWith(`${med}:`))?.split(':')[1]?.trim() || '',
       instructions: (s.instructions || '').split(' | ').find(p => p.startsWith(`${med}:`))?.split(':')[1]?.trim() || '',
     }));
     setEditingStep(s);
@@ -908,9 +904,9 @@ const handleCompleteReExamination = async () => {
   // ─────────────────────────────────────────────────────────
   const isCompleted = consultation?.consultation_status === 'completed';
   const allApproved = consultation?.treatment_plan.every(s => s.status === 'approved') ?? false;
-  const totalSteps  = consultation?.treatment_plan.length ?? 0;
-  const doneSteps   = consultation?.treatment_plan.filter(s => s.status === 'approved').length ?? 0;
-  const pct         = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
+  const totalSteps = consultation?.treatment_plan.length ?? 0;
+  const doneSteps = consultation?.treatment_plan.filter(s => s.status === 'approved').length ?? 0;
+  const pct = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
 
   // ─────────────────────────────────────────────────────────
   // ERROR STATE
@@ -1072,13 +1068,12 @@ const handleCompleteReExamination = async () => {
                   <div className="mt-2 space-y-1.5">
                     {consultation?.treatment_plan.map((s, i) => (
                       <div key={i} className="flex items-center gap-2">
-                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                          s.status === 'approved'    ? 'border-teal-400 bg-teal-50 text-teal-600' :
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-bold shrink-0 ${s.status === 'approved' ? 'border-teal-400 bg-teal-50 text-teal-600' :
                           s.status === 'in-progress' ? 'border-sky-400 bg-sky-50 text-sky-600' :
-                          s.status === 'completed'   ? 'border-amber-400 bg-amber-50 text-amber-600' :
-                          s.status === 'scheduled'   ? 'border-violet-400 bg-violet-50 text-violet-600' :
-                                                       'border-slate-300 bg-slate-50 text-slate-400'
-                        }`}>
+                            s.status === 'completed' ? 'border-amber-400 bg-amber-50 text-amber-600' :
+                              s.status === 'scheduled' ? 'border-violet-400 bg-violet-50 text-violet-600' :
+                                'border-slate-300 bg-slate-50 text-slate-400'
+                          }`}>
                           {s.status === 'approved' ? '✓' : i + 1}
                         </div>
                         <span className="text-xs text-slate-600 truncate">{s.title}</span>
@@ -1114,9 +1109,10 @@ const handleCompleteReExamination = async () => {
 
                       <div className="space-y-3">
                         {consultation!.treatment_plan.map((step, idx) => {
-                          const physical    = isPhysical(step);
-                          const apptInfo    = stepApptStatuses[step.stepNumber] || null;
-                          const isApproved  = step.status === 'approved';
+                          const physical = isPhysical(step);
+                          const clinic = isClinicStep(step);
+                          const apptInfo = stepApptStatuses[step.stepNumber] || null;
+                          const isApproved = step.status === 'approved';
                           // FIX: hide Schedule Visit button when appointment is already confirmed
                           const apptConfirmed = apptInfo?.appointment?.status === 'confirmed';
 
@@ -1128,14 +1124,13 @@ const handleCompleteReExamination = async () => {
                               </div>
 
                               {/* Step card */}
-                              <div className={`flex-1 min-w-0 rounded-xl border transition-colors duration-200 ${
-                                isApproved                     ? 'border-teal-100 bg-teal-50/30' :
-                                step.status === 'in-progress'  ? 'border-sky-100 bg-sky-50/20' :
-                                step.status === 'completed'    ? 'border-amber-100 bg-amber-50/20' :
-                                step.status === 'scheduled'    ? 'border-violet-100 bg-violet-50/20' :
-                                step.status === 'rejected'     ? 'border-rose-100 bg-rose-50/20' :
-                                                                 'border-slate-200 bg-white'
-                              }`}>
+                              <div className={`flex-1 min-w-0 rounded-xl border transition-colors duration-200 ${isApproved ? 'border-teal-100 bg-teal-50/30' :
+                                step.status === 'in-progress' ? 'border-sky-100 bg-sky-50/20' :
+                                  step.status === 'completed' ? 'border-amber-100 bg-amber-50/20' :
+                                    step.status === 'scheduled' ? 'border-violet-100 bg-violet-50/20' :
+                                      step.status === 'rejected' ? 'border-rose-100 bg-rose-50/20' :
+                                        'border-slate-200 bg-white'
+                                }`}>
                                 {/* Card header */}
                                 <div className="px-4 py-3 flex flex-wrap items-start justify-between gap-2">
                                   <div className="min-w-0">
@@ -1189,11 +1184,9 @@ const handleCompleteReExamination = async () => {
                                 )}
 
                                 {/* ── PHYSICAL VISIT: APPOINTMENT PANEL ──
-                                    Shown whenever step is scheduled or in-progress.
-                                    The panel itself contains the Schedule Visit button
-                                    so we do NOT duplicate it in the action row below.
+                                    Shown whenever step is scheduled or in-progress and an appointment exists.
                                 ── */}
-                                {physical && (step.status === 'scheduled' || step.status === 'in-progress') && (
+                                {clinic && (apptInfo?.appointment || loadingApptFor === step.stepNumber) && (step.status === 'scheduled' || step.status === 'in-progress') && (
                                   <div className="px-4 pb-3 border-t border-slate-100 pt-3">
                                     <div className="flex items-center justify-between mb-2">
                                       <FL>Appointment</FL>
@@ -1225,21 +1218,21 @@ const handleCompleteReExamination = async () => {
                                 <div className="px-4 py-2.5 border-t border-slate-100 flex flex-wrap gap-1.5 items-center">
 
                                   {/* Regular step: completed → review */}
-                                  {!physical && step.status === 'completed' && (
+                                  {!clinic && step.status === 'completed' && (
                                     <Btn size="xs" onClick={() => openReview(step)}>
                                       Review Step
                                     </Btn>
                                   )}
 
                                   {/* Physical: in-progress → Complete Examination */}
-                                  {physical && step.status === 'in-progress' && (
+                                  {clinic && step.status === 'in-progress' && (
                                     <Btn size="xs" variant="teal" onClick={() => openCompleteReExam(step)}>
                                       Complete Examination
                                     </Btn>
                                   )}
 
                                   {/* Physical: completed (fallback if auto-approve fails) → Review */}
-                                  {physical && step.status === 'completed' && (
+                                  {clinic && step.status === 'completed' && (
                                     <Btn size="xs" onClick={() => openReview(step)}>
                                       Review Step
                                     </Btn>
@@ -1249,6 +1242,13 @@ const handleCompleteReExamination = async () => {
                                   {!isApproved && step.status !== 'scheduled' && step.status !== 'in-progress' && (
                                     <Btn size="xs" variant="ghost" onClick={() => openEditStep(step)}>
                                       Edit
+                                    </Btn>
+                                  )}
+
+                                  {/* Physical: schedule visit if no appointment yet */}
+                                  {clinic && !isApproved && !apptInfo?.appointment && !loadingApptFor && (
+                                    <Btn size="xs" variant="outline" onClick={() => openSchedule(step)}>
+                                      Schedule Visit
                                     </Btn>
                                   )}
                                 </div>
@@ -1292,15 +1292,14 @@ const handleCompleteReExamination = async () => {
             <div className="grid grid-cols-2 gap-2 mt-1">
               {[
                 { v: 'approve_with_followup', label: 'Approve & Continue', sub: 'Approve step, add follow-up', color: 'sky' },
-                { v: 'approve_and_complete',  label: 'Approve & Close',    sub: 'Approve and end treatment',  color: 'teal' },
+                { v: 'approve_and_complete', label: 'Approve & Close', sub: 'Approve and end treatment', color: 'teal' },
               ].map(opt => (
                 <button key={opt.v} type="button"
                   onClick={() => setReviewForm(f => ({ ...f, decision: opt.v as any }))}
-                  className={`p-3 text-left rounded-xl border-2 transition-all ${
-                    reviewForm.decision === opt.v
-                      ? opt.color === 'sky' ? 'border-sky-500 bg-sky-50' : 'border-teal-500 bg-teal-50'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
+                  className={`p-3 text-left rounded-xl border-2 transition-all ${reviewForm.decision === opt.v
+                    ? opt.color === 'sky' ? 'border-sky-500 bg-sky-50' : 'border-teal-500 bg-teal-50'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
                 >
                   <p className="text-xs font-bold text-slate-900">{opt.label}</p>
                   <p className="text-[11px] text-slate-500 mt-0.5">{opt.sub}</p>
@@ -1414,11 +1413,10 @@ const handleCompleteReExamination = async () => {
             <div className="grid grid-cols-2 gap-2 mt-1">
               <button type="button"
                 onClick={() => setCompleteReForm(f => ({ ...f, outcome: 'all_good' }))}
-                className={`p-3 text-left rounded-xl border-2 transition-all ${
-                  completeReForm.outcome === 'all_good'
-                    ? 'border-teal-500 bg-teal-50'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
+                className={`p-3 text-left rounded-xl border-2 transition-all ${completeReForm.outcome === 'all_good'
+                  ? 'border-teal-500 bg-teal-50'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
               >
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm">✓</span>
@@ -1429,11 +1427,10 @@ const handleCompleteReExamination = async () => {
 
               <button type="button"
                 onClick={() => setCompleteReForm(f => ({ ...f, outcome: 'needs_followup' }))}
-                className={`p-3 text-left rounded-xl border-2 transition-all ${
-                  completeReForm.outcome === 'needs_followup'
-                    ? 'border-sky-500 bg-sky-50'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
+                className={`p-3 text-left rounded-xl border-2 transition-all ${completeReForm.outcome === 'needs_followup'
+                  ? 'border-sky-500 bg-sky-50'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
               >
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm">＋</span>
