@@ -120,7 +120,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
               <LocalHospital sx={{ fontSize: 38, color: '#fff' }} />
             </Avatar>
             <Typography variant="h5" fontWeight={700} color="#1976d2" gutterBottom>
-              MedPro Hospital Admin
+              MediCare Admin
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
               Welcome! Please sign in to continue.
@@ -208,15 +208,6 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
               {loading ? <CircularProgress size={22} color="inherit" /> : 'Sign In'}
             </Button>
           </Box>
-          <Box sx={{ textAlign: 'right', mt: 2 }}>
-            <Link
-              component={RouterLink}
-              to="/forgot-password"
-              sx={{ color: '#1976d2', fontWeight: 500, fontSize: '0.95rem', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
-            >
-              Forgot password?
-            </Link>
-          </Box>
           <Divider sx={{ my: 3 }} />
           <Box sx={{ textAlign: 'center', mt: 1 }}>
             <Typography variant="caption" color="text.secondary">
@@ -226,7 +217,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
         </Paper>
         <Box sx={{ textAlign: 'center', mt: 3 }}>
           <Typography variant="caption" color="#1976d2" sx={{ fontSize: '0.8rem' }}>
-            &copy; 2025 MedPro Hospital. All rights reserved.
+            &copy; 2026 MediCare. All rights reserved.
           </Typography>
         </Box>
       </Container>

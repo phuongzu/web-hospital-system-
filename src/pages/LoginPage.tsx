@@ -579,35 +579,15 @@ const LoginPage: React.FC = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!validateForm()) return;
 
     setError('');
     setLoading(true);
 
     try {
-      // For Mock Purposes if API fails or no backend
-      if (formData.email === 'doctor@example.com' && formData.password === 'password123') {
-        // Simulating successful login
-        const mockUser = {
-          _id: 'mock-doctor-id',
-          name: 'Dr. Mock',
-          email: 'doctor@example.com',
-          role: 'doctor',
-          accessToken: 'mock-token'
-        };
-        localStorage.setItem('token', mockUser.accessToken);
-        localStorage.setItem('doctorId', mockUser._id);
-        localStorage.setItem('userId', mockUser._id);
-        navigate('/home', { replace: true });
-        return;
-      }
-
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: formData.email.trim(),
           password: formData.password,
@@ -621,10 +601,10 @@ const LoginPage: React.FC = () => {
         const userData = data.data;
         const userId = userData._id;
 
-        // Store tokens and user data
         localStorage.setItem('token', userData.accessToken);
         localStorage.setItem('doctorId', userId);
         localStorage.setItem('userId', userId);
+        localStorage.setItem('doctorName', userData.name || userData.fullName || 'Doctor');
 
         if (rememberMe) {
           localStorage.setItem('rememberMe', 'true');
@@ -635,36 +615,16 @@ const LoginPage: React.FC = () => {
         }
 
         navigate('/home', { replace: true });
-
       } else {
         let errorMessage = data.message || 'Login failed. Please try again.';
-
         if (response.status === 423) {
           setUnlockModalOpen(true);
-          errorMessage = '';
+          errorMessage = ''; // không hiển thị lỗi, mở modal unlock
         }
-
-        if (response.status !== 423) {
-          setError(errorMessage);
-        }
+        if (errorMessage) setError(errorMessage);
       }
-
     } catch (err: any) {
       console.error('Login error:', err);
-      // Fallback for demo if API is unreachable
-      if (formData.email && formData.password) {
-        const mockUser = {
-          _id: 'mock-doctor-id',
-          name: 'Dr. Demo',
-          email: formData.email,
-          role: 'doctor',
-          accessToken: 'mock-token'
-        };
-        localStorage.setItem('token', mockUser.accessToken);
-        localStorage.setItem('doctorId', mockUser._id);
-        navigate('/home', { replace: true });
-        return;
-      }
       setError('Unable to connect to server. Please check your internet connection and try again.');
     } finally {
       setLoading(false);

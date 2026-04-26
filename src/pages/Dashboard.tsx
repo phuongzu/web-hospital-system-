@@ -55,12 +55,12 @@ const getTypeAccent = (type: string) => {
 
 const getTypeIconStyle = (type: string) => {
   const map: Record<string, string> = {
-    appointment:      'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400',
-    alert:            'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400',
-    message:          'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400',
-    consultation:     'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400',
-    emergency:        'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400',
-    success:          'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
+    appointment: 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400',
+    alert: 'bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400',
+    message: 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400',
+    consultation: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400',
+    emergency: 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+    success: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
     approval_request: 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400',
   };
   return map[type] ?? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
@@ -83,10 +83,10 @@ const getAvatarColor = (name: string) => {
 };
 
 const PatientAvatar: React.FC<{ name?: string; avatar?: string; size?: 'sm' | 'md' }> = ({ name, avatar, size = 'md' }) => {
-  const url     = getAvatarUrl(avatar);
+  const url = getAvatarUrl(avatar);
   const hasReal = avatar && avatar !== 'undefined' && avatar !== 'null' && avatar.trim() !== '';
-  const dim     = size === 'md' ? 'size-10' : 'size-8';
-  const ts      = size === 'md' ? 'text-sm' : 'text-xs';
+  const dim = size === 'md' ? 'size-10' : 'size-8';
+  const ts = size === 'md' ? 'text-sm' : 'text-xs';
   return (
     <div className={`${dim} rounded-xl overflow-hidden shrink-0`}>
       {hasReal ? (
@@ -119,7 +119,7 @@ const ToastCard = React.memo(({ item, onClose, navigate, index, total }: {
     return () => cancelAnimationFrame(raf);
   }, []);
   const offset = (total - 1 - index) * 6;
-  const scale  = 1 - (total - 1 - index) * 0.025;
+  const scale = 1 - (total - 1 - index) * 0.025;
   return (
     <div
       className={`absolute bottom-0 left-0 right-0 transition-all duration-300 ease-out
@@ -180,11 +180,11 @@ const ToastStack = React.memo(({ toasts, onClose, navigate }: { toasts: ToastIte
 // ─── Appointment row ───────────────────────────────────────────────────────────
 
 const statusStyle: Record<string, { badge: string; dot: string }> = {
-  confirmed:    { badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400', dot: 'bg-emerald-500' },
-  pending:      { badge: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400',         dot: 'bg-amber-400' },
-  'checked-in': { badge: 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400',     dot: 'bg-violet-500 animate-pulse' },
-  completed:    { badge: 'bg-slate-100 text-slate-500 dark:bg-slate-800/60 dark:text-slate-400',         dot: 'bg-slate-400' },
-  cancelled:    { badge: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400',                  dot: 'bg-red-400' },
+  confirmed: { badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400', dot: 'bg-emerald-500' },
+  pending: { badge: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400', dot: 'bg-amber-400' },
+  'checked-in': { badge: 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400', dot: 'bg-violet-500 animate-pulse' },
+  completed: { badge: 'bg-green-100 text-green-500 dark:bg-green-800/60 dark:text-green-400', dot: 'bg-green-400' },
+  cancelled: { badge: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400', dot: 'bg-red-400' },
 };
 
 const AppointmentRow = React.memo(({ appointment, isNow, onClick }: { appointment: Appointment; isNow?: boolean; onClick: () => void }) => {
@@ -221,20 +221,20 @@ const AppointmentRow = React.memo(({ appointment, isNow, onClick }: { appointmen
 // ─── Consultation card ─────────────────────────────────────────────────────────
 
 const severityStyle: Record<string, { badge: string; bar: string }> = {
-  mild:     { badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400', bar: 'bg-emerald-500' },
-  moderate: { badge: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400',         bar: 'bg-amber-400' },
-  severe:   { badge: 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400',     bar: 'bg-orange-500' },
-  critical: { badge: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400',                 bar: 'bg-red-500' },
+  mild: { badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400', bar: 'bg-emerald-500' },
+  moderate: { badge: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400', bar: 'bg-amber-400' },
+  severe: { badge: 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400', bar: 'bg-orange-500' },
+  critical: { badge: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400', bar: 'bg-red-500' },
 };
 
 const ConsultationCard = React.memo(({ consultation, onClick }: { consultation: Consultation; onClick: () => void }) => {
-  const sev   = consultation.severity?.toLowerCase() ?? 'mild';
+  const sev = consultation.severity?.toLowerCase() ?? 'mild';
   const style = severityStyle[sev] ?? severityStyle['mild'];
-  const plan  = consultation.treatment_plan || [];
+  const plan = consultation.treatment_plan || [];
   const total = plan.length;
-  const done  = Math.min(plan.filter((s: any) => s.status === 'completed' || s.status === 'approved').length, total);
-  const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
-  const med   = plan[0]?.medication || (consultation as any).initialStep?.medication || '';
+  const done = Math.min(plan.filter((s: any) => s.status === 'completed' || s.status === 'approved').length, total);
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const med = plan[0]?.medication || (consultation as any).initialStep?.medication || '';
   return (
     <div
       onClick={onClick}
@@ -283,23 +283,23 @@ const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const doctorId = getDoctorId();
 
-  const [profile, setProfile]             = useState<DoctorProfile | null>(null);
-  const [stats, setStats]                 = useState<Stat[]>([]);
-  const [appointments, setAppointments]   = useState<Appointment[]>([]);
+  const [profile, setProfile] = useState<DoctorProfile | null>(null);
+  const [stats, setStats] = useState<Stat[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [notifications, setNotifications] = useState<NotificationType[]>([]);
   const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [recentPatients, setRecentPatients] = useState<Patient[]>([]);
-  const [unreadCount, setUnreadCount]     = useState(0);
-  const [notifOpen, setNotifOpen]         = useState(false);
-  const [loading, setLoading]             = useState(true);
-  const [toasts, setToasts]               = useState<ToastItem[]>([]);
-  const [isOnline, setIsOnline]           = useState(navigator.onLine);
-  const [lastSynced, setLastSynced]       = useState(new Date());
-  const [refreshing, setRefreshing]       = useState(false);
-  const [quickStats, setQuickStats]       = useState({ todayTotal: 0, checkedIn: 0, activeCases: 0, completedToday: 0 });
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [lastSynced, setLastSynced] = useState(new Date());
+  const [refreshing, setRefreshing] = useState(false);
+  const [quickStats, setQuickStats] = useState({ todayTotal: 0, checkedIn: 0, activeCases: 0, completedToday: 0 });
 
-  const notifRef    = useRef<HTMLDivElement>(null);
-  const seenIds     = useRef<Set<string>>(new Set());
+  const notifRef = useRef<HTMLDivElement>(null);
+  const seenIds = useRef<Set<string>>(new Set());
   const isFirstLoad = useRef(true);
 
   // Network
@@ -333,7 +333,7 @@ const Dashboard: React.FC = () => {
     try {
       const token = localStorage.getItem('token') || '';
       const today = new Date().toISOString().split('T')[0];
-      const res   = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments?date=${today}&_t=${Date.now()}`, {
+      const res = await fetch(`${API_BASE_URL}/doctors/${doctorId}/appointments?date=${today}&_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-cache' },
       });
       if (!res.ok) return;
@@ -359,7 +359,7 @@ const Dashboard: React.FC = () => {
             })
           );
         }
-        const checkedIn      = sorted.filter(a => a.status === 'checked-in').length;
+        const checkedIn = sorted.filter(a => a.status === 'checked-in').length;
         const completedToday = sorted.filter(a => a.status === 'completed').length;
         setQuickStats(p => ({ ...p, todayTotal: sorted.length, checkedIn, completedToday }));
         setLastSynced(new Date());
@@ -373,7 +373,7 @@ const Dashboard: React.FC = () => {
     if (!doctorId) return;
     try {
       const token = localStorage.getItem('token') || '';
-      const res   = await fetch(`${API_BASE_URL}/notifications?doctorId=${doctorId}&_t=${Date.now()}`, {
+      const res = await fetch(`${API_BASE_URL}/notifications?doctorId=${doctorId}&_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
       if (!res.ok) return;
@@ -393,7 +393,7 @@ const Dashboard: React.FC = () => {
       fetched.forEach(n => seenIds.current.add(n._id));
       setNotifications(prev => {
         const prevMap = new Map(prev.map(n => [n._id, n]));
-        const merged  = fetched.map(n => { const ex = prevMap.get(n._id); return ex ? { ...n, isRead: ex.isRead || n.isRead } : n; });
+        const merged = fetched.map(n => { const ex = prevMap.get(n._id); return ex ? { ...n, isRead: ex.isRead || n.isRead } : n; });
         if (areNotificationsEqual(prev, merged)) return prev;
         return merged;
       });
@@ -409,7 +409,7 @@ const Dashboard: React.FC = () => {
       setLoading(true);
       try {
         const token = localStorage.getItem('token') || '';
-        const hdr   = { Authorization: `Bearer ${token}` };
+        const hdr = { Authorization: `Bearer ${token}` };
         const [profileRes, statsRes] = await Promise.allSettled([
           fetch(`${API_BASE_URL}/doctors/profile/${doctorId}`),
           fetch(`${API_BASE_URL}/doctors/stats/${doctorId}`),
@@ -440,9 +440,9 @@ const Dashboard: React.FC = () => {
       finally { setLoading(false); }
     };
     init();
-    const apt   = setInterval(() => { if (!document.hidden) fetchAppointments(true); }, 10_000);
+    const apt = setInterval(() => { if (!document.hidden) fetchAppointments(true); }, 10_000);
     const notif = setInterval(() => { if (!document.hidden) fetchNotifications(); }, 15_000);
-    const dash  = setInterval(() => { if (!document.hidden) init(); }, 120_000);
+    const dash = setInterval(() => { if (!document.hidden) init(); }, 120_000);
     const onVis = () => { fetchAppointments(true); fetchNotifications(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { clearInterval(apt); clearInterval(notif); clearInterval(dash); document.removeEventListener('visibilitychange', onVis); };
@@ -484,16 +484,16 @@ const Dashboard: React.FC = () => {
   };
 
   // Derived
-  const totalStats     = useMemo(() => stats.reduce((s, c) => s + (c.count || 0), 0), [stats]);
-  const currentHour    = new Date().getHours();
-  const greeting       = currentHour < 12 ? 'Good morning' : currentHour < 18 ? 'Good afternoon' : 'Good evening';
+  const totalStats = useMemo(() => stats.reduce((s, c) => s + (c.count || 0), 0), [stats]);
+  const currentHour = new Date().getHours();
+  const greeting = currentHour < 12 ? 'Good morning' : currentHour < 18 ? 'Good afternoon' : 'Good evening';
   const minSinceSynced = Math.floor((Date.now() - lastSynced.getTime()) / 60_000);
 
   const nowApptId = useMemo(() => {
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     return appointments.find(a => {
       const [h, m] = (a.time_slot || '00:00').split(':').map(Number);
-      const diff   = (h * 60 + m) - nowMin;
+      const diff = (h * 60 + m) - nowMin;
       return diff >= 0 && diff <= 30 && !['completed', 'cancelled'].includes(a.status);
     })?._id;
   }, [appointments]);
@@ -625,10 +625,10 @@ const Dashboard: React.FC = () => {
         {/* ── STATS ──────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: "Today's Appointments", value: quickStats.todayTotal,     icon: 'calendar_today',    color: 'text-primary', bg: 'bg-primary/8 dark:bg-primary/10',                 iconBg: 'bg-primary/10 dark:bg-primary/15',                   to: '/appointments' },
-            { label: 'In Waiting Room',       value: quickStats.checkedIn,      icon: 'person_pin_circle', color: 'text-violet-600 dark:text-violet-400', bg: quickStats.checkedIn > 0 ? 'bg-violet-50 dark:bg-violet-900/15' : 'bg-slate-50 dark:bg-[#1a2c2f]', iconBg: 'bg-violet-100 dark:bg-violet-900/30', pulse: quickStats.checkedIn > 0, to: '/appointments' },
-            { label: 'Active Cases',          value: quickStats.activeCases,    icon: 'stethoscope',       color: 'text-sky-600 dark:text-sky-400',        bg: 'bg-sky-50 dark:bg-sky-900/15',           iconBg: 'bg-sky-100 dark:bg-sky-900/30',       to: '/consultations' },
-            { label: 'Completed Today',       value: quickStats.completedToday, icon: 'task_alt',          color: 'text-emerald-600 dark:text-emerald-400',bg: 'bg-emerald-50 dark:bg-emerald-900/15',   iconBg: 'bg-emerald-100 dark:bg-emerald-900/30',to: '/appointments' },
+            { label: "Today's Appointments", value: quickStats.todayTotal, icon: 'calendar_today', color: 'text-primary', bg: 'bg-primary/8 dark:bg-primary/10', iconBg: 'bg-primary/10 dark:bg-primary/15', to: '/appointments' },
+            { label: 'In Waiting Room', value: quickStats.checkedIn, icon: 'person_pin_circle', color: 'text-violet-600 dark:text-violet-400', bg: quickStats.checkedIn > 0 ? 'bg-violet-50 dark:bg-violet-900/15' : 'bg-slate-50 dark:bg-[#1a2c2f]', iconBg: 'bg-violet-100 dark:bg-violet-900/30', pulse: quickStats.checkedIn > 0, to: '/appointments' },
+            { label: 'Active Cases', value: quickStats.activeCases, icon: 'stethoscope', color: 'text-sky-600 dark:text-sky-400', bg: 'bg-sky-50 dark:bg-sky-900/15', iconBg: 'bg-sky-100 dark:bg-sky-900/30', to: '/consultations' },
+            { label: 'Completed Today', value: quickStats.completedToday, icon: 'task_alt', color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-900/15', iconBg: 'bg-emerald-100 dark:bg-emerald-900/30', to: '/appointments' },
           ].map((s, i) => (
             <div
               key={i}
@@ -754,9 +754,9 @@ const Dashboard: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 {stats.map(stat => {
-                  const pct      = totalStats > 0 ? ((stat.count || 0) / totalStats) * 100 : 0;
+                  const pct = totalStats > 0 ? ((stat.count || 0) / totalStats) * 100 : 0;
                   const colorMap: Record<string, string> = { confirmed: 'bg-emerald-500', pending: 'bg-amber-400', cancelled: 'bg-red-400', completed: 'bg-sky-500' };
-                  const bar      = colorMap[stat._id] ?? 'bg-primary';
+                  const bar = colorMap[stat._id] ?? 'bg-primary';
                   return (
                     <div key={stat._id}>
                       <div className="flex items-center justify-between mb-1.5">

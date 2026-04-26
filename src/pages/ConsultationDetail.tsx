@@ -42,7 +42,7 @@ interface TreatmentStep {
 interface Consultation {
   _id: string;
   user_id: { _id: string; name: string; avatar?: string; gender: string; dateOfBirth: string; };
-  doctor_id: { _id: string; name: string; };
+  doctor_id: { _id: string; name: string; } | string;
   diagnosis?: string;
   priority: 'normal' | 'urgent';
   consultation_status: 'in-progress' | 'completed';
@@ -88,6 +88,34 @@ const STEP_CFG: Record<string, { label: string; dot: string; badge: string; trac
   rejected: { label: 'Revision', dot: 'bg-rose-400', badge: 'bg-rose-50 text-rose-700 border-rose-200', track: 'border-rose-400 text-rose-600 bg-rose-50' },
 };
 const stepCfg = (s: string) => STEP_CFG[s] ?? STEP_CFG.pending;
+
+// ─────────────────────────────────────────────────────────────
+// HELPER: Get doctor name from consultation (FIX: "Dr. Doctor" bug)
+// ─────────────────────────────────────────────────────────────
+const getDoctorName = (consultation: Consultation | null): string => {
+  if (!consultation) return localStorage.getItem('doctorName') || 'Doctor';
+
+  // doctor_id may be populated (object) or just an ID string
+  const doctorId = consultation.doctor_id;
+  if (doctorId && typeof doctorId === 'object' && (doctorId as any).name) {
+    return (doctorId as any).name;
+  }
+
+  // Fallback to localStorage
+  const stored = localStorage.getItem('doctorName');
+  if (stored && stored !== 'Doctor' && stored !== 'undefined' && stored !== 'null') {
+    return stored;
+  }
+
+  return 'Doctor';
+};
+
+// ─────────────────────────────────────────────────────────────
+// QR CODE GENERATOR
+// ─────────────────────────────────────────────────────────────
+const generateQRDataURL = (text: string): string => {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=2&data=${encodeURIComponent(text)}`;
+};
 
 // ─────────────────────────────────────────────────────────────
 // SMALL COMPONENTS
@@ -213,6 +241,311 @@ const Toasts: React.FC<{ items: Toast[]; onDismiss: (id: number) => void }> = ({
 );
 
 // ─────────────────────────────────────────────────────────────
+// CONSULTATION QR MODAL (Full consultation, not per-step)
+// ─────────────────────────────────────────────────────────────
+interface ConsultationQRModalProps {
+  open: boolean;
+  onClose: () => void;
+  consultation: Consultation | null;
+  consultationId: string;
+}
+
+const ConsultationQRModal: React.FC<ConsultationQRModalProps> = ({
+  open, onClose, consultation, consultationId
+}) => {
+  const [qrDataUrl, setQrDataUrl] = useState('');
+
+  useEffect(() => {
+    if (open && consultation) {
+      // Link to full consultation (not a step) — this is what the patient scans on mobile
+      const consultationUrl = `${window.location.origin}/consultation/${consultationId}/summary`;
+      const qr = generateQRDataURL(consultationUrl);
+      setQrDataUrl(qr);
+    }
+  }, [open, consultation, consultationId]);
+
+  const calcAge = (dob: string) => {
+    const b = new Date(dob); const n = new Date();
+    let a = n.getFullYear() - b.getFullYear();
+    if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
+    return a;
+  };
+
+  const doctorName = getDoctorName(consultation);
+  const totalSteps = consultation?.treatment_plan.length ?? 0;
+  const approvedSteps = consultation?.treatment_plan.filter(s => s.status === 'approved').length ?? 0;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Consultation QR Code"
+      subtitle={`Case #${consultationId.slice(-6).toUpperCase()} — Full Consultation`}
+      size="md"
+      footer={
+        <div className="flex justify-between items-center gap-2">
+          <p className="text-[11px] text-slate-400">Patient scans to view full consultation & all prescriptions</p>
+          <div className="flex gap-2">
+            <Btn variant="ghost" size="sm" onClick={onClose}>Close</Btn>
+            <Btn variant="outline" size="sm" onClick={() => {
+              if (!qrDataUrl) return;
+              const a = document.createElement('a');
+              a.href = qrDataUrl;
+              a.download = `consultation-qr-${consultationId.slice(-6)}.png`;
+              a.click();
+            }}>
+              ⬇ Download QR
+            </Btn>
+          </div>
+        </div>
+      }
+    >
+      {consultation && (
+        <div className="space-y-4">
+          {/* Patient info */}
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="w-9 h-9 rounded-full bg-sky-100 flex items-center justify-center text-sm font-bold text-sky-600">
+              {consultation.user_id.name.charAt(0)}
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-800">{consultation.user_id.name}</p>
+              <p className="text-[11px] text-slate-500">
+                {consultation.user_id.gender} · {calcAge(consultation.user_id.dateOfBirth)} yrs · Case #{consultationId.slice(-6).toUpperCase()}
+              </p>
+            </div>
+          </div>
+
+          {/* QR Code */}
+          <div className="flex flex-col items-center gap-3 py-2">
+            {qrDataUrl ? (
+              <div className="p-3 bg-white border-2 border-slate-200 rounded-xl shadow-sm">
+                <img src={qrDataUrl} alt="Consultation QR Code" className="w-44 h-44" />
+              </div>
+            ) : (
+              <div className="w-44 h-44 bg-slate-100 rounded-xl flex items-center justify-center">
+                <Spinner size={24} />
+              </div>
+            )}
+            <p className="text-[11px] text-slate-400 text-center max-w-[220px]">
+              Scan with mobile to view all prescriptions and treatment steps
+            </p>
+          </div>
+
+          {/* Consultation summary */}
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Treatment Progress</span>
+              <span className="text-xs font-bold text-teal-600">{approvedSteps}/{totalSteps} steps approved</span>
+            </div>
+            {consultation.diagnosis && (
+              <p className="text-xs text-slate-600"><span className="font-semibold">Diagnosis:</span> {consultation.diagnosis}</p>
+            )}
+            <p className="text-xs text-slate-500"><span className="font-semibold">Doctor:</span> Dr. {doctorName}</p>
+          </div>
+
+          {/* Step list */}
+          <div>
+            <FL>All Treatment Steps</FL>
+            <div className="space-y-1.5 mt-1">
+              {consultation.treatment_plan.map((s, i) => (
+                <div key={i} className="flex items-center gap-2.5 p-2 bg-white border border-slate-200 rounded-lg">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${s.status === 'approved' ? 'bg-teal-100 text-teal-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {s.status === 'approved' ? '✓' : i + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{s.title}</p>
+                    {s.medication && <p className="text-[11px] text-slate-500 truncate">{s.medication}</p>}
+                  </div>
+                  <StatusBadge status={s.status} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────
+// PRINT FULL CONSULTATION (FIXED: includes ALL steps, correct doctor name)
+// ─────────────────────────────────────────────────────────────
+const printFullConsultation = (consultation: Consultation, consultationId: string) => {
+  const calcAge = (dob: string) => {
+    const b = new Date(dob); const n = new Date();
+    let a = n.getFullYear() - b.getFullYear();
+    if (n.getMonth() < b.getMonth() || (n.getMonth() === b.getMonth() && n.getDate() < b.getDate())) a--;
+    return a;
+  };
+
+  const parsePrescriptions = (s: TreatmentStep) => {
+    if (!s.medication) return [];
+    return s.medication.split(' + ').map(med => {
+      const parse = (str?: string) => {
+        if (!str) return '';
+        const part = str.split(' | ').find(p => p.trim().startsWith(`${med}:`));
+        return part ? part.split(':')[1].trim() : (str.includes(':') ? '' : str);
+      };
+      return { name: med, dosage: parse(s.dosage), duration: parse(s.duration), instructions: parse(s.instructions) };
+    });
+  };
+
+  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const caseId = consultationId.slice(-6).toUpperCase();
+  const age = calcAge(consultation.user_id.dateOfBirth);
+  // FIX: use getDoctorName to avoid "Dr. Doctor"
+  const doctorName = getDoctorName(consultation);
+
+  // FIX: Generate QR for full consultation URL (scannable on mobile)
+  const consultationUrl = `${window.location.origin}/consultation/${consultationId}/summary`;
+  const qrDataUrl = generateQRDataURL(consultationUrl);
+
+  // FIX: Sort treatment_plan by stepNumber to ensure correct order
+  const sortedSteps = [...consultation.treatment_plan].sort((a, b) => a.stepNumber - b.stepNumber);
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Full Consultation History — ${consultation.user_id.name}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1e293b; background: #fff; font-size: 13px; line-height: 1.5; }
+    .page { max-width: 800px; margin: 0 auto; padding: 40px 48px; }
+    .header { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 20px; border-bottom: 2px solid #0284c7; margin-bottom: 24px; }
+    .clinic-name { font-size: 22px; font-weight: 800; color: #0284c7; }
+    .clinic-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin-bottom: 4px; }
+    .patient-info { display: flex; gap: 40px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 30px; }
+    .step-card { margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; page-break-inside: avoid; }
+    .step-header { background: #f8fafc; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+    .step-title { font-size: 14px; font-weight: 700; color: #0f172a; }
+    .step-status-approved { font-size: 10px; font-weight: 700; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; padding: 2px 10px; border-radius: 12px; text-transform: uppercase; }
+    .step-status-other { font-size: 10px; font-weight: 700; background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; padding: 2px 10px; border-radius: 12px; text-transform: uppercase; }
+    .step-body { padding: 16px; }
+    .rx-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .rx-table th { background: #0284c7; color: white; padding: 8px 12px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+    .rx-table th:first-child { border-radius: 6px 0 0 0; }
+    .rx-table th:last-child { border-radius: 0 6px 0 0; }
+    .rx-table td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+    .rx-table tr:last-child td { border-bottom: none; }
+    .no-rx { font-size: 12px; color: #94a3b8; font-style: italic; padding: 8px 0; }
+    .notes { font-size: 12px; color: #475569; margin-top: 10px; font-style: italic; white-space: pre-wrap; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px 12px; }
+    .footer { margin-top: 40px; padding-top: 20px; border-top: 1px dashed #cbd5e1; display: flex; justify-content: space-between; align-items: flex-end; }
+    .qr-section { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .qr-section img { width: 90px; height: 90px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 2px; }
+    .qr-label { font-size: 9px; color: #94a3b8; text-align: center; margin-top: 2px; }
+    .diagnosis-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; margin-bottom: 20px; font-size: 13px; color: #1e40af; font-weight: 500; }
+    .step-number-badge { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: #e0f2fe; color: #0369a1; font-size: 10px; font-weight: 700; margin-right: 8px; }
+    @media print { .page { padding: 20px; } .step-card { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div>
+        <div class="clinic-name">MediCare Clinic</div>
+        <div class="clinic-sub">Full Consultation Summary — Case #${caseId}</div>
+        <div class="clinic-sub">Dr. ${doctorName}</div>
+        <div class="clinic-sub">123 Healthcare Avenue · Ho Chi Minh City · Tel: +84 28 1234 5678</div>
+      </div>
+      <div style="text-align: right">
+        <div class="label">Date Issued</div>
+        <div style="font-weight: 600">${today}</div>
+        <div class="label" style="margin-top: 8px">Total Steps</div>
+        <div style="font-weight: 600">${sortedSteps.length} steps</div>
+      </div>
+    </div>
+
+    <div class="label">Patient Records</div>
+    <div class="patient-info">
+      <div><div class="label">Name</div><div style="font-weight: 600">${consultation.user_id.name}</div></div>
+      <div><div class="label">Gender</div><div style="font-weight: 600">${consultation.user_id.gender}</div></div>
+      <div><div class="label">Age</div><div style="font-weight: 600">${age} yrs</div></div>
+    </div>
+
+    ${consultation.diagnosis ? `
+    <div class="label" style="margin-bottom: 8px">Primary Diagnosis</div>
+    <div class="diagnosis-box">${consultation.diagnosis}</div>
+    ` : ''}
+
+    <div class="label" style="margin-bottom: 12px">Treatment History (${sortedSteps.length} steps total)</div>
+    
+    ${sortedSteps.map((s) => {
+    const rxList = parsePrescriptions(s);
+    const statusClass = s.status === 'approved' ? 'step-status-approved' : 'step-status-other';
+    const statusLabel = stepCfg(s.status).label;
+    return `
+      <div class="step-card">
+        <div class="step-header">
+          <div class="step-title">
+            <span class="step-number-badge">${s.status === 'approved' ? '✓' : s.stepNumber}</span>
+            Step ${s.stepNumber}: ${s.title}
+          </div>
+          <div class="${statusClass}">${statusLabel}</div>
+        </div>
+        <div class="step-body">
+          ${s.description ? `<p style="margin-bottom: 10px; font-size: 12px; color: #64748b;">${s.description}</p>` : ''}
+          
+          ${rxList.length > 0 ? `
+            <div class="label">Prescribed Medications</div>
+            <table class="rx-table">
+              <thead><tr><th>Medication</th><th>Dosage</th><th>Duration</th><th>Instructions</th></tr></thead>
+              <tbody>
+                ${rxList.map(rx => `
+                  <tr>
+                    <td style="font-weight: 600">${rx.name}</td>
+                    <td>${rx.dosage || '—'}</td>
+                    <td>${rx.duration || '—'}</td>
+                    <td style="font-style: italic;">${rx.instructions || '—'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : `<p class="no-rx">No medications prescribed for this step.</p>`}
+          
+          ${s.doctorNotes ? `
+            <div class="label" style="margin-top: 12px">Doctor's Clinical Notes</div>
+            <div class="notes">${s.doctorNotes}</div>
+          ` : ''}
+        </div>
+      </div>
+      `;
+  }).join('')}
+
+    <div class="footer">
+      <div class="qr-section">
+        <img src="${qrDataUrl}" alt="Consultation QR" />
+        <div class="qr-label">Scan to view full consultation</div>
+      </div>
+
+      <div style="flex: 1; padding: 0 32px;">
+        <p style="font-size: 10px; color: #94a3b8; line-height: 1.6;">
+          This document contains all ${sortedSteps.length} treatment steps for Case #${caseId}.<br/>
+          Please follow all dosage instructions carefully. Contact your doctor if you experience any adverse effects.
+        </p>
+      </div>
+
+      <div style="text-align: center">
+        <div style="width: 150px; border-bottom: 1px solid #000; margin-bottom: 6px"></div>
+        <div style="font-weight: 700; font-size: 13px;">Dr. ${doctorName}</div>
+        <div class="label">Attending Physician</div>
+      </div>
+    </div>
+  </div>
+  <script>window.onload = () => window.print();</script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank', 'width=900,height=800');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
 // APPOINTMENT STATUS PANEL
 // ─────────────────────────────────────────────────────────────
 const AppointmentPanel: React.FC<{
@@ -230,10 +563,7 @@ const AppointmentPanel: React.FC<{
     </div>
   );
 
-  // No appointment yet
-  if (!apptStatus?.appointment) {
-    return null;
-  }
+  if (!apptStatus?.appointment) return null;
 
   const { appointment, doctorAction } = apptStatus;
   const apptDate = new Date(appointment.appointment_date);
@@ -245,7 +575,6 @@ const AppointmentPanel: React.FC<{
       doctorAction === 'examination_done' ? 'border-slate-200 bg-slate-50' :
         'border-violet-200 bg-violet-50/40'
       }`}>
-      {/* Appointment info row */}
       <div className="flex items-start justify-between gap-2">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5">
@@ -263,8 +592,6 @@ const AppointmentPanel: React.FC<{
           </p>
           {appointment.reason && <p className="text-[11px] text-slate-500">{appointment.reason}</p>}
         </div>
-
-        {/* Reschedule link — hidden when confirmed */}
         {!isConfirmed && (appointment.status === 'scheduled' || appointment.status === 'pending') && (
           <button onClick={onScheduleVisit} className="text-[11px] text-slate-400 hover:text-sky-600 underline underline-offset-2 shrink-0">
             Reschedule
@@ -272,7 +599,6 @@ const AppointmentPanel: React.FC<{
         )}
       </div>
 
-      {/* waiting_patient */}
       {doctorAction === 'waiting_patient' && (
         <div className="flex items-center gap-2 bg-violet-100/60 rounded-md px-3 py-2">
           <span className="text-violet-500 text-sm">⏳</span>
@@ -283,7 +609,6 @@ const AppointmentPanel: React.FC<{
         </div>
       )}
 
-      {/* start_examination: patient confirmed arrival */}
       {doctorAction === 'start_examination' && !examinationStarted && (
         <div className="space-y-2">
           <div className="flex items-center gap-2 bg-teal-100 rounded-md px-3 py-2">
@@ -295,20 +620,12 @@ const AppointmentPanel: React.FC<{
               </p>
             </div>
           </div>
-          <Btn
-            size="sm"
-            variant="teal"
-            className="w-full"
-            onClick={onStartExamination}
-            loading={actionLoading}
-            disabled={actionLoading}
-          >
+          <Btn size="sm" variant="teal" className="w-full" onClick={onStartExamination} loading={actionLoading} disabled={actionLoading}>
             🩺 Start Examination
           </Btn>
         </div>
       )}
 
-      {/* After Start Examination is clicked — show in-progress indicator */}
       {doctorAction === 'start_examination' && examinationStarted && (
         <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-md px-3 py-2">
           <span className="text-teal-500 text-sm animate-pulse">🩺</span>
@@ -319,7 +636,6 @@ const AppointmentPanel: React.FC<{
         </div>
       )}
 
-      {/* examination_done */}
       {doctorAction === 'examination_done' && (
         <div className="flex items-center gap-2 bg-slate-100 rounded-md px-3 py-2">
           <span className="text-slate-500 text-sm">✓</span>
@@ -327,7 +643,6 @@ const AppointmentPanel: React.FC<{
         </div>
       )}
 
-      {/* cancelled */}
       {appointment.status === 'cancelled' && (
         <div className="flex items-center justify-between gap-2 bg-rose-50 rounded-md px-3 py-2">
           <div className="flex items-center gap-2">
@@ -407,11 +722,9 @@ const ConsultationDetail: React.FC = () => {
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
 
-  // Appointment statuses keyed by stepNumber
   const [stepApptStatuses, setStepApptStatuses] = useState<Record<number, StepAppointmentStatus>>({});
   const [loadingApptFor, setLoadingApptFor] = useState<number | null>(null);
   const [arrivalBusy, setArrivalBusy] = useState<number | null>(null);
-  // Track steps where Start Examination was already clicked → hide the button
   const [examinationStarted, setExaminationStarted] = useState<Set<number>>(new Set());
 
   // ── Which step is being acted on ─────────────────────────
@@ -419,6 +732,9 @@ const ConsultationDetail: React.FC = () => {
   const [editingStep, setEditingStep] = useState<TreatmentStep | null>(null);
   const [schedulingStep, setSchedulingStep] = useState<TreatmentStep | null>(null);
   const [completingReStep, setCompletingReStep] = useState<TreatmentStep | null>(null);
+
+  // ── QR modal for full consultation ───────────────────────
+  const [showConsultationQRModal, setShowConsultationQRModal] = useState(false);
 
   // ── Modal visibility ──────────────────────────────────────
   const [showStepModal, setShowStepModal] = useState(false);
@@ -467,9 +783,9 @@ const ConsultationDetail: React.FC = () => {
   // TOAST
   // ─────────────────────────────────────────────────────────
   const toast = useCallback((message: string, type: Toast['type'] = 'success') => {
-    const id = toastId.current++;
-    setToasts(p => [...p, { id, message, type }]);
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4500);
+    const tid = toastId.current++;
+    setToasts(p => [...p, { id: tid, message, type }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== tid)), 4500);
   }, []);
 
   // ─────────────────────────────────────────────────────────
@@ -484,6 +800,7 @@ const ConsultationDetail: React.FC = () => {
       if (data.success) {
         const found = (data.data as Consultation[]).find(c => c._id === id);
         if (found) {
+          // FIX: Always sort by stepNumber to ensure correct order
           found.treatment_plan.sort((a, b) => a.stepNumber - b.stepNumber);
           setConsultation(found);
           found.treatment_plan
@@ -513,9 +830,8 @@ const ConsultationDetail: React.FC = () => {
       if (data.success) {
         setStepApptStatuses(prev => ({ ...prev, [stepNumber]: data.data }));
       }
-    } catch {
-      // silent fail
-    } finally {
+    } catch { }
+    finally {
       if (!silent) setLoadingApptFor(null);
     }
   }, [id]);
@@ -537,7 +853,7 @@ const ConsultationDetail: React.FC = () => {
       const res = await fetch(`${API}/doctors/drugs`);
       const data = await res.json();
       if (data.success) setAvailableDrugs(data.data || []);
-    } catch {/* non-fatal */ }
+    } catch { }
   }, []);
 
   const fetchSlots = useCallback(async (date: string) => {
@@ -603,8 +919,6 @@ const ConsultationDetail: React.FC = () => {
   // ─────────────────────────────────────────────────────────
   // ACTIONS
   // ─────────────────────────────────────────────────────────
-
-  // Review a completed regular step
   const handleReview = async () => {
     if (!reviewingStep || !id) return;
     setBusy(true);
@@ -628,7 +942,6 @@ const ConsultationDetail: React.FC = () => {
     finally { setBusy(false); }
   };
 
-  // Schedule / reschedule a re-examination visit
   const handleSchedule = async () => {
     if (!schedulingStep || !id || !scheduleForm.date || !scheduleForm.time) return;
     setBusy(true);
@@ -655,7 +968,6 @@ const ConsultationDetail: React.FC = () => {
     finally { setBusy(false); }
   };
 
-  // Doctor confirms patient has arrived → step becomes in-progress
   const handleConfirmArrival = async (step: TreatmentStep) => {
     if (!id) return;
     setArrivalBusy(step.stepNumber);
@@ -666,7 +978,6 @@ const ConsultationDetail: React.FC = () => {
       const data = await res.json();
       if (data.success) {
         toast('Examination started');
-        // Mark this step so Start Examination button is hidden immediately
         setExaminationStarted(prev => new Set(prev).add(step.stepNumber));
         await fetchConsultation(true);
         fetchStepApptStatus(step.stepNumber);
@@ -677,19 +988,13 @@ const ConsultationDetail: React.FC = () => {
     finally { setArrivalBusy(null); }
   };
 
-  // ── Complete Examination: two paths depending on outcome ──────
   const handleCompleteReExamination = async () => {
     if (!completingReStep || !id) return;
     setBusy(true);
     try {
-      // ── Step 1: Mark physical examination as done ──────────────
       const completeRes = await fetch(
         `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/complete-re-examination`,
-        {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ doctorNotes: completeReForm.doctorNotes }),
-        }
+        { method: 'POST', headers: authHeaders(), body: JSON.stringify({ doctorNotes: completeReForm.doctorNotes }) }
       );
       const completeData = await completeRes.json();
       if (!completeData.success) {
@@ -698,17 +1003,13 @@ const ConsultationDetail: React.FC = () => {
       }
 
       if (completeReForm.outcome === 'all_good') {
-        // ── PATH A: No issues → approve step, close appointment ───
         const reviewRes = await fetch(
           `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/review`,
           {
-            method: 'POST',
-            headers: authHeaders(),
+            method: 'POST', headers: authHeaders(),
             body: JSON.stringify({
-              decision: 'approve_and_complete',
-              doctorNotes: completeReForm.doctorNotes,
-              requireFollowUp: false,
-              completeConsultation: false,
+              decision: 'approve_and_complete', doctorNotes: completeReForm.doctorNotes,
+              requireFollowUp: false, completeConsultation: false,
             }),
           }
         );
@@ -724,54 +1025,25 @@ const ConsultationDetail: React.FC = () => {
           await fetchConsultation(true);
         }
       } else {
-        // ── PATH B: Issues found → approve current step + create new follow-up step
         const validRx = completeReForm.followupPrescriptions.filter(p => p.medication.trim());
-
-        // FIXED: Đảm bảo format đúng cho medication, dosage, duration, instructions
         const medicationString = validRx.length ? validRx.map(p => p.medication).join(' + ') : undefined;
-
-        // Format: "Medication1: dosage1 | Medication2: dosage2"
-        const dosageString = validRx.length
-          ? validRx.map(p => `${p.medication}: ${p.dosage}`).join(' | ')
-          : undefined;
-
-        const durationString = validRx.length
-          ? validRx.map(p => `${p.medication}: ${p.duration}`).join(' | ')
-          : undefined;
-
-        const instructionsString = validRx.length
-          ? validRx.map(p => `${p.medication}: ${p.instructions}`).join(' | ')
-          : undefined;
+        const dosageString = validRx.length ? validRx.map(p => `${p.medication}: ${p.dosage}`).join(' | ') : undefined;
+        const durationString = validRx.length ? validRx.map(p => `${p.medication}: ${p.duration}`).join(' | ') : undefined;
+        const instructionsString = validRx.length ? validRx.map(p => `${p.medication}: ${p.instructions}`).join(' | ') : undefined;
 
         const body: any = {
-          decision: 'approve_with_followup',
-          doctorNotes: completeReForm.doctorNotes,
-          requireFollowUp: true,
+          decision: 'approve_with_followup', doctorNotes: completeReForm.doctorNotes, requireFollowUp: true,
           additionalStepTitle: completeReForm.followupTitle || `Follow-up: ${completingReStep.title}`,
           additionalStepDescription: completeReForm.followupDescription || 'Additional treatment required based on examination findings.',
-          medication: medicationString,
-          dosage: dosageString,
-          duration: durationString,
-          instructions: instructionsString,
-          prescriptions: validRx,
-          isPhysicalVisit: completeReForm.followupIsPhysicalVisit,
-          completeConsultation: false,
+          medication: medicationString, dosage: dosageString, duration: durationString, instructions: instructionsString,
+          prescriptions: validRx, isPhysicalVisit: completeReForm.followupIsPhysicalVisit, completeConsultation: false,
         };
-
-        console.log('Sending follow-up step data:', body); // Debug log
 
         const reviewRes = await fetch(
           `${API}/doctors/consultations/${id}/steps/${completingReStep.stepNumber}/review`,
-          {
-            method: 'POST',
-            headers: authHeaders(),
-            body: JSON.stringify(body)
-          }
+          { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }
         );
-
         const reviewData = await reviewRes.json();
-        console.log('Review response:', reviewData); // Debug log
-
         if (reviewData.success) {
           toast('Examination completed — follow-up step added');
           setShowCompleteReModal(false);
@@ -783,15 +1055,13 @@ const ConsultationDetail: React.FC = () => {
           await fetchConsultation(true);
         }
       }
-    } catch (error) {
-      console.error('Error completing examination:', error);
+    } catch {
       toast('Network error', 'error');
     } finally {
       setBusy(false);
     }
   };
 
-  // Save (add or edit) a treatment step
   const handleSaveStep = async () => {
     if (!id || !stepForm.title.trim()) return;
     setBusy(true);
@@ -822,7 +1092,6 @@ const ConsultationDetail: React.FC = () => {
     finally { setBusy(false); }
   };
 
-  // Close entire consultation
   const handleCloseCase = async () => {
     if (!id) return;
     setBusy(true);
@@ -885,15 +1154,8 @@ const ConsultationDetail: React.FC = () => {
   const openCompleteReExam = (s: TreatmentStep) => {
     setCompletingReStep(s);
     setCompleteReForm({
-      doctorNotes: '',
-      outcome: 'all_good',
-      followupTitle: '',
-      followupDescription: '',
-      followupPrescriptions: [],
-      followupIsPhysicalVisit: false,
-      scheduleNext: false,
-      nextDate: '',
-      nextTime: '09:00',
+      doctorNotes: '', outcome: 'all_good', followupTitle: '', followupDescription: '',
+      followupPrescriptions: [], followupIsPhysicalVisit: false, scheduleNext: false, nextDate: '', nextTime: '09:00',
     });
     setFollowupCustomMode({});
     setShowCompleteReModal(true);
@@ -935,7 +1197,7 @@ const ConsultationDetail: React.FC = () => {
         @keyframes modalIn { from { opacity:0; transform:scale(0.97) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
       `}</style>
 
-      <Toasts items={toasts} onDismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
+      <Toasts items={toasts} onDismiss={tid => setToasts(p => p.filter(t => t.id !== tid))} />
 
       {/* ── HEADER ── */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 h-14">
@@ -975,11 +1237,7 @@ const ConsultationDetail: React.FC = () => {
             </div>
 
             {!isCompleted ? (
-              <Btn variant="teal" size="sm"
-                onClick={handleCloseCase}
-                disabled={!allApproved || busy}
-                loading={busy && allApproved}
-              >
+              <Btn variant="teal" size="sm" onClick={handleCloseCase} disabled={!allApproved || busy} loading={busy && allApproved}>
                 Close Case
               </Btn>
             ) : (
@@ -1090,9 +1348,36 @@ const ConsultationDetail: React.FC = () => {
             {/* ─── RIGHT PANEL ─── */}
             <section>
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+                {/* ── Treatment Plan Header with QR + Print for full consultation ── */}
                 <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
                   <h2 className="text-sm font-bold text-slate-800">Treatment Plan</h2>
-                  <Btn variant="outline" size="xs" onClick={openAddStep} disabled={isCompleted}>+ Add Step</Btn>
+                  <div className="flex gap-2">
+                    {/* QR Code button — full consultation */}
+                    <button
+                      onClick={() => setShowConsultationQRModal(true)}
+                      title="Show Consultation QR Code"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-violet-600 hover:text-violet-700 hover:bg-violet-50 border border-violet-200 transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="3" y="3" width="7" height="7" rx="1" />
+                        <rect x="14" y="3" width="7" height="7" rx="1" />
+                        <rect x="3" y="14" width="7" height="7" rx="1" />
+                        <path d="M14 14h1v1h-1zM17 14h1v1h-1zM20 14v1M14 17h1M17 17h1v1h-1zM20 17v1M14 20h1v1h-1zM17 20h1M20 20v1" />
+                      </svg>
+                      QR
+                    </button>
+
+                    {/* Print full consultation button */}
+                    <Btn variant="outline" size="xs" onClick={() => consultation && printFullConsultation(consultation, id || '')}>
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M6 9V2h12v7" />
+                        <path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" />
+                        <path d="M6 14h12v8H6z" />
+                      </svg>
+                      Print
+                    </Btn>
+                    <Btn variant="outline" size="xs" onClick={openAddStep} disabled={isCompleted}>+ Add Step</Btn>
+                  </div>
                 </div>
 
                 <div className="p-5">
@@ -1113,8 +1398,6 @@ const ConsultationDetail: React.FC = () => {
                           const clinic = isClinicStep(step);
                           const apptInfo = stepApptStatuses[step.stepNumber] || null;
                           const isApproved = step.status === 'approved';
-                          // FIX: hide Schedule Visit button when appointment is already confirmed
-                          const apptConfirmed = apptInfo?.appointment?.status === 'confirmed';
 
                           return (
                             <div key={step._id || idx} className="relative flex gap-4">
@@ -1149,7 +1432,7 @@ const ConsultationDetail: React.FC = () => {
                                   <StatusBadge status={step.status} />
                                 </div>
 
-                                {/* Prescriptions — show for all steps including physical */}
+                                {/* Prescriptions */}
                                 {step.medication && (
                                   <div className="px-4 pb-3">
                                     <PrescriptionDisplay step={step} />
@@ -1183,14 +1466,11 @@ const ConsultationDetail: React.FC = () => {
                                   </div>
                                 )}
 
-                                {/* ── PHYSICAL VISIT: APPOINTMENT PANEL ──
-                                    Shown whenever step is scheduled or in-progress and an appointment exists.
-                                ── */}
+                                {/* Appointment panel */}
                                 {clinic && (apptInfo?.appointment || loadingApptFor === step.stepNumber) && (step.status === 'scheduled' || step.status === 'in-progress') && (
                                   <div className="px-4 pb-3 border-t border-slate-100 pt-3">
                                     <div className="flex items-center justify-between mb-2">
                                       <FL>Appointment</FL>
-                                      {/* Refresh status button */}
                                       {step.reExaminationScheduled && (
                                         <button
                                           onClick={() => fetchStepApptStatus(step.stepNumber)}
@@ -1216,40 +1496,20 @@ const ConsultationDetail: React.FC = () => {
 
                                 {/* ── ACTION ROW ── */}
                                 <div className="px-4 py-2.5 border-t border-slate-100 flex flex-wrap gap-1.5 items-center">
-
-                                  {/* Regular step: completed → review */}
                                   {!clinic && step.status === 'completed' && (
-                                    <Btn size="xs" onClick={() => openReview(step)}>
-                                      Review Step
-                                    </Btn>
+                                    <Btn size="xs" onClick={() => openReview(step)}>Review Step</Btn>
                                   )}
-
-                                  {/* Physical: in-progress → Complete Examination */}
                                   {clinic && step.status === 'in-progress' && (
-                                    <Btn size="xs" variant="teal" onClick={() => openCompleteReExam(step)}>
-                                      Complete Examination
-                                    </Btn>
+                                    <Btn size="xs" variant="teal" onClick={() => openCompleteReExam(step)}>Complete Examination</Btn>
                                   )}
-
-                                  {/* Physical: completed (fallback if auto-approve fails) → Review */}
                                   {clinic && step.status === 'completed' && (
-                                    <Btn size="xs" onClick={() => openReview(step)}>
-                                      Review Step
-                                    </Btn>
+                                    <Btn size="xs" onClick={() => openReview(step)}>Review Step</Btn>
                                   )}
-
-                                  {/* Edit (non-approved, non-scheduled, non-in-progress) */}
                                   {!isApproved && step.status !== 'scheduled' && step.status !== 'in-progress' && (
-                                    <Btn size="xs" variant="ghost" onClick={() => openEditStep(step)}>
-                                      Edit
-                                    </Btn>
+                                    <Btn size="xs" variant="ghost" onClick={() => openEditStep(step)}>Edit</Btn>
                                   )}
-
-                                  {/* Physical: schedule visit if no appointment yet */}
                                   {clinic && !isApproved && !apptInfo?.appointment && !loadingApptFor && (
-                                    <Btn size="xs" variant="outline" onClick={() => openSchedule(step)}>
-                                      Schedule Visit
-                                    </Btn>
+                                    <Btn size="xs" variant="outline" onClick={() => openSchedule(step)}>Schedule Visit</Btn>
                                   )}
                                 </div>
                               </div>
@@ -1270,7 +1530,15 @@ const ConsultationDetail: React.FC = () => {
            MODALS
       ═══════════════════════════ */}
 
-      {/* ── REVIEW MODAL (regular steps only) ── */}
+      {/* ── FULL CONSULTATION QR MODAL ── */}
+      <ConsultationQRModal
+        open={showConsultationQRModal}
+        onClose={() => setShowConsultationQRModal(false)}
+        consultation={consultation}
+        consultationId={id || ''}
+      />
+
+      {/* ── REVIEW MODAL ── */}
       <Modal open={showReviewModal} onClose={() => setShowReviewModal(false)}
         title={`Review — Step #${reviewingStep?.stepNumber}`}
         subtitle={reviewingStep?.title}
@@ -1344,8 +1612,7 @@ const ConsultationDetail: React.FC = () => {
         footer={
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" size="sm" onClick={() => setShowScheduleModal(false)}>Cancel</Btn>
-            <Btn size="sm" onClick={handleSchedule} loading={busy}
-              disabled={busy || !scheduleForm.date || !scheduleForm.time}>
+            <Btn size="sm" onClick={handleSchedule} loading={busy} disabled={busy || !scheduleForm.date || !scheduleForm.time}>
               Confirm Schedule
             </Btn>
           </div>
@@ -1394,11 +1661,7 @@ const ConsultationDetail: React.FC = () => {
               variant={completeReForm.outcome === 'all_good' ? 'teal' : 'primary'}
               onClick={handleCompleteReExamination}
               loading={busy}
-              disabled={
-                busy ||
-                !completeReForm.doctorNotes.trim() ||
-                (completeReForm.outcome === 'needs_followup' && !completeReForm.followupTitle.trim())
-              }
+              disabled={busy || !completeReForm.doctorNotes.trim() || (completeReForm.outcome === 'needs_followup' && !completeReForm.followupTitle.trim())}
             >
               {completeReForm.outcome === 'all_good' ? 'Complete & Approve' : 'Complete & Add Follow-up'}
             </Btn>
@@ -1406,17 +1669,12 @@ const ConsultationDetail: React.FC = () => {
         }
       >
         <div className="space-y-4">
-
-          {/* ── Outcome selector ── */}
           <div>
             <FL>Examination Outcome</FL>
             <div className="grid grid-cols-2 gap-2 mt-1">
               <button type="button"
                 onClick={() => setCompleteReForm(f => ({ ...f, outcome: 'all_good' }))}
-                className={`p-3 text-left rounded-xl border-2 transition-all ${completeReForm.outcome === 'all_good'
-                  ? 'border-teal-500 bg-teal-50'
-                  : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
+                className={`p-3 text-left rounded-xl border-2 transition-all ${completeReForm.outcome === 'all_good' ? 'border-teal-500 bg-teal-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
               >
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm">✓</span>
@@ -1424,13 +1682,9 @@ const ConsultationDetail: React.FC = () => {
                 </div>
                 <p className="text-[11px] text-slate-500">No issues — approve & close this step</p>
               </button>
-
               <button type="button"
                 onClick={() => setCompleteReForm(f => ({ ...f, outcome: 'needs_followup' }))}
-                className={`p-3 text-left rounded-xl border-2 transition-all ${completeReForm.outcome === 'needs_followup'
-                  ? 'border-sky-500 bg-sky-50'
-                  : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
+                className={`p-3 text-left rounded-xl border-2 transition-all ${completeReForm.outcome === 'needs_followup' ? 'border-sky-500 bg-sky-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
               >
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm">＋</span>
@@ -1441,7 +1695,6 @@ const ConsultationDetail: React.FC = () => {
             </div>
           </div>
 
-          {/* ── Examination findings — always required ── */}
           <Textarea
             label="Examination Findings *"
             rows={3}
@@ -1450,13 +1703,8 @@ const ConsultationDetail: React.FC = () => {
             placeholder="Document physical examination findings, patient condition, observations…"
           />
 
-          {/* ══════════════════════════════════════════════
-              PATH B: Needs Follow-up — full step builder
-          ══════════════════════════════════════════════ */}
           {completeReForm.outcome === 'needs_followup' && (
             <div className="space-y-4 rounded-xl border border-sky-200 bg-sky-50/40 p-4">
-
-              {/* Info banner — old appointment stays confirmed */}
               <div className="flex items-start gap-2 bg-sky-100 rounded-lg px-3 py-2">
                 <span className="text-sky-600 mt-0.5 text-sm shrink-0">ℹ</span>
                 <p className="text-[11px] text-sky-800 leading-relaxed">
@@ -1464,32 +1712,20 @@ const ConsultationDetail: React.FC = () => {
                 </p>
               </div>
 
-              {/* Step info */}
               <div>
                 <SL>New Follow-up Step</SL>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Input
-                    label="Step Title *"
-                    value={completeReForm.followupTitle}
+                  <Input label="Step Title *" value={completeReForm.followupTitle}
                     onChange={e => setCompleteReForm(f => ({ ...f, followupTitle: e.target.value }))}
-                    placeholder={`e.g. Follow-up: ${completingReStep?.title || 'Treatment'}`}
-                  />
-                  <Input
-                    label="Description"
-                    value={completeReForm.followupDescription}
+                    placeholder={`e.g. Follow-up: ${completingReStep?.title || 'Treatment'}`} />
+                  <Input label="Description" value={completeReForm.followupDescription}
                     onChange={e => setCompleteReForm(f => ({ ...f, followupDescription: e.target.value }))}
-                    placeholder="Brief description of the follow-up treatment…"
-                  />
+                    placeholder="Brief description of the follow-up treatment…" />
                 </div>
-
-                {/* Physical visit toggle */}
                 <label className="flex items-center gap-2.5 cursor-pointer group mt-3">
-                  <input
-                    type="checkbox"
-                    checked={completeReForm.followupIsPhysicalVisit}
+                  <input type="checkbox" checked={completeReForm.followupIsPhysicalVisit}
                     onChange={e => setCompleteReForm(f => ({ ...f, followupIsPhysicalVisit: e.target.checked }))}
-                    className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-400"
-                  />
+                    className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-400" />
                   <span className="text-xs font-medium text-slate-700 group-hover:text-slate-900">Requires physical clinic visit</span>
                   {completeReForm.followupIsPhysicalVisit && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">Physical Visit</span>
@@ -1497,86 +1733,57 @@ const ConsultationDetail: React.FC = () => {
                 </label>
               </div>
 
-              {/* ── Prescriptions section ── */}
               <div>
                 <SL>Prescriptions</SL>
                 <div className="space-y-3">
                   {completeReForm.followupPrescriptions.map((rx, i) => (
                     <div key={i} className="relative bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
-                      {/* Remove button */}
                       <button
-                        onClick={() => setCompleteReForm(f => ({
-                          ...f,
-                          followupPrescriptions: f.followupPrescriptions.filter((_, j) => j !== i)
-                        }))}
+                        onClick={() => setCompleteReForm(f => ({ ...f, followupPrescriptions: f.followupPrescriptions.filter((_, j) => j !== i) }))}
                         className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors text-sm"
                       >×</button>
-
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {/* Medication */}
                         <div className="sm:col-span-2">
                           <label className="block text-xs font-medium text-slate-600 mb-1">Medication</label>
-                          <select
-                            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800"
+                          <select className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800"
                             value={availableDrugs.find(d => d.name === rx.medication) ? rx.medication : (rx.medication ? '_custom' : '')}
                             onChange={e => {
                               const n = [...completeReForm.followupPrescriptions];
                               n[i].medication = e.target.value === '_custom' ? '' : e.target.value;
                               setCompleteReForm(f => ({ ...f, followupPrescriptions: n }));
                               setFollowupCustomMode(p => ({ ...p, [`${i}-med`]: e.target.value === '_custom' }));
-                            }}
-                          >
+                            }}>
                             <option value="">Select medication…</option>
-                            {availableDrugs.map(d => (
-                              <option key={d._id} value={d.name}>{d.name}{d.strength ? ` — ${d.strength}` : ''}</option>
-                            ))}
+                            {availableDrugs.map(d => <option key={d._id} value={d.name}>{d.name}{d.strength ? ` — ${d.strength}` : ''}</option>)}
                             <option value="_custom">Other (enter manually)</option>
                           </select>
                           {(followupCustomMode[`${i}-med`] || (rx.medication && !availableDrugs.find(d => d.name === rx.medication))) && (
-                            <Input
-                              className="mt-1.5 text-xs"
-                              value={rx.medication}
-                              onChange={e => {
-                                const n = [...completeReForm.followupPrescriptions];
-                                n[i].medication = e.target.value;
-                                setCompleteReForm(f => ({ ...f, followupPrescriptions: n }));
-                              }}
-                              placeholder="Enter medication name"
-                            />
+                            <Input className="mt-1.5 text-xs" value={rx.medication}
+                              onChange={e => { const n = [...completeReForm.followupPrescriptions]; n[i].medication = e.target.value; setCompleteReForm(f => ({ ...f, followupPrescriptions: n })); }}
+                              placeholder="Enter medication name" />
                           )}
                         </div>
-
-                        {/* Dosage / Duration / Instructions */}
                         {(['dosage', 'duration', 'instructions'] as const).map(field => {
                           const opts = field === 'dosage' ? DOSAGES : field === 'duration' ? DURATIONS : INSTRUCTIONS;
                           return (
                             <div key={field} className={field === 'instructions' ? 'sm:col-span-2' : ''}>
                               <label className="block text-xs font-medium text-slate-600 mb-1 capitalize">{field}</label>
-                              <select
-                                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800"
+                              <select className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800"
                                 value={opts.includes(rx[field]) ? rx[field] : (rx[field] ? '_custom' : '')}
                                 onChange={e => {
                                   const n = [...completeReForm.followupPrescriptions];
                                   n[i][field] = e.target.value === '_custom' ? '' : e.target.value;
                                   setCompleteReForm(f => ({ ...f, followupPrescriptions: n }));
                                   setFollowupCustomMode(p => ({ ...p, [`${i}-${field}`]: e.target.value === '_custom' }));
-                                }}
-                              >
+                                }}>
                                 <option value="">Select {field}…</option>
                                 {opts.map(o => <option key={o} value={o}>{o}</option>)}
                                 <option value="_custom">Custom…</option>
                               </select>
                               {(followupCustomMode[`${i}-${field}`] || (rx[field] && !opts.includes(rx[field]))) && (
-                                <Input
-                                  className="mt-1.5 text-xs"
-                                  value={rx[field]}
-                                  onChange={e => {
-                                    const n = [...completeReForm.followupPrescriptions];
-                                    n[i][field] = e.target.value;
-                                    setCompleteReForm(f => ({ ...f, followupPrescriptions: n }));
-                                  }}
-                                  placeholder={`Enter ${field}`}
-                                />
+                                <Input className="mt-1.5 text-xs" value={rx[field]}
+                                  onChange={e => { const n = [...completeReForm.followupPrescriptions]; n[i][field] = e.target.value; setCompleteReForm(f => ({ ...f, followupPrescriptions: n })); }}
+                                  placeholder={`Enter ${field}`} />
                               )}
                             </div>
                           );
@@ -1584,15 +1791,8 @@ const ConsultationDetail: React.FC = () => {
                       </div>
                     </div>
                   ))}
-
-                  <Btn
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => setCompleteReForm(f => ({
-                      ...f,
-                      followupPrescriptions: [...f.followupPrescriptions, { medication: '', dosage: '', duration: '', instructions: '' }]
-                    }))}
-                  >
+                  <Btn variant="ghost" size="xs"
+                    onClick={() => setCompleteReForm(f => ({ ...f, followupPrescriptions: [...f.followupPrescriptions, { medication: '', dosage: '', duration: '', instructions: '' }] }))}>
                     + Add medication
                   </Btn>
                   {!completeReForm.followupPrescriptions.length && (
@@ -1600,14 +1800,9 @@ const ConsultationDetail: React.FC = () => {
                   )}
                 </div>
               </div>
-
-              {/* ── Optional: schedule next appointment ── */}
-              {/* REMOVED: schedule next is no longer needed.
-                  The new step starts as pending → doctor reviews → approves → then schedules visit normally */}
             </div>
           )}
 
-          {/* Summary hint */}
           <p className="text-[11px] text-slate-400">
             {completeReForm.outcome === 'all_good'
               ? '✓ This step will be approved. The existing appointment remains unchanged.'
@@ -1624,8 +1819,7 @@ const ConsultationDetail: React.FC = () => {
           footer={
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" size="sm" onClick={() => setShowStepModal(false)}>Cancel</Btn>
-              <Btn size="sm" onClick={handleSaveStep} loading={busy}
-                disabled={busy || !stepForm.title.trim()}>
+              <Btn size="sm" onClick={handleSaveStep} loading={busy} disabled={busy || !stepForm.title.trim()}>
                 {editingStep ? 'Update Step' : 'Create Step'}
               </Btn>
             </div>
@@ -1645,9 +1839,7 @@ const ConsultationDetail: React.FC = () => {
               <input type="checkbox" checked={stepForm.isPhysicalVisit}
                 onChange={e => setStepForm(f => ({ ...f, isPhysicalVisit: e.target.checked }))}
                 className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-400" />
-              <span className="text-xs font-medium text-slate-700 group-hover:text-slate-900">
-                Requires physical clinic visit
-              </span>
+              <span className="text-xs font-medium text-slate-700 group-hover:text-slate-900">Requires physical clinic visit</span>
               {stepForm.isPhysicalVisit && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">Physical Visit</span>
               )}
@@ -1660,9 +1852,7 @@ const ConsultationDetail: React.FC = () => {
                   <div key={i} className="relative bg-slate-50 rounded-xl border border-slate-200 p-3">
                     <button onClick={() => setStepForm(f => ({ ...f, prescriptions: f.prescriptions.filter((_, j) => j !== i) }))}
                       className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors text-sm">×</button>
-
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {/* Medication */}
                       <div className="sm:col-span-2">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Medication</label>
                         <select className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800"
@@ -1683,8 +1873,6 @@ const ConsultationDetail: React.FC = () => {
                             placeholder="Enter medication name" />
                         )}
                       </div>
-
-                      {/* Dosage / Duration / Instructions */}
                       {(['dosage', 'duration', 'instructions'] as const).map(field => {
                         const opts = field === 'dosage' ? DOSAGES : field === 'duration' ? DURATIONS : INSTRUCTIONS;
                         return (
@@ -1713,7 +1901,6 @@ const ConsultationDetail: React.FC = () => {
                     </div>
                   </div>
                 ))}
-
                 <Btn variant="ghost" size="xs"
                   onClick={() => setStepForm(f => ({ ...f, prescriptions: [...f.prescriptions, { medication: '', dosage: '', duration: '', instructions: '' }] }))}>
                   + Add medication
