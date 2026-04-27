@@ -33,15 +33,12 @@ export const getAvatarUrl = (avatarPath: string | undefined): string => {
     return 'https://lh3.googleusercontent.com/aida-public/AB6AXuDzGT7gwberGMMlbYPnkoMNOA8qmXTkhXqIBCKvsZx0EM1ksC8Jfgtoaoh8vdBlr9W0ngsc2pkf87T1WhJty8dqmuTRfm2G3_Hzd_T_G_4vlHyxaSkvlmRUYkkpZIwJO9p4eo4FkzbHvN2AdbbHwvHHyxMmCV4gMu4567PLZLQhSsGIXC190ExsQ7dQbejyuRsszhD3Y__YDWJLZKc1BwjeUNmIXRzT1W5ZAZYslyj5WslFz0z6xRdxNl-vKYqdOkctzhJ5P1YrUwG9';
   }
 
-  console.log('🔍 getAvatarUrl input:', avatarPath);
-
   if (avatarPath.startsWith('http')) {
     return avatarPath;
   }
   let filename = avatarPath;
   if (avatarPath.includes('/')) {
     filename = avatarPath.split('/').pop() || avatarPath;
-    console.log('📦 Extracted filename:', filename);
   }
   const baseUrl = API_BASE_URL.replace('/api', '');
   return `${baseUrl}/uploads/avatars/${filename}`;

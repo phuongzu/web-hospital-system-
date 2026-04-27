@@ -38,10 +38,14 @@ interface Message {
   message: string;
   message_type: 'text' | 'image' | 'file';
   media_url?: string;
+  media_urls?: string[];
   media_name?: string;
+  media_size?: number;
+  media_mime?: string;
   read?: boolean;
   timestamp?: string | number | Date;
   createdAt?: string;
+  updatedAt?: string;
   edited?: boolean;
   deleted?: boolean;
   deleted_for_me?: boolean;
@@ -570,6 +574,33 @@ const Messages: React.FC = () => {
 
     socket.on('user_typing', (data: any) => handleTypingSocketRef.current(data));
     socket.on('messages_read_by_user', (data: any) => handleMessagesReadRef.current(data));
+    socket.on('messages_read', (data: any) => handleMessagesReadRef.current(data));
+
+    socket.on('conversation_updated', (data: any) => {
+      console.log('🔄 [WEB] Received conversation_updated:', data);
+      const convId = data._id || data.conversationId;
+      if (!convId) return;
+
+      setConversations(prev => {
+        const index = prev.findIndex(c => c._id === convId);
+        if (index === -1) return prev; // Optionally fetch new conversation if needed
+
+        const updatedConversations = [...prev];
+        updatedConversations[index] = {
+          ...updatedConversations[index],
+          ...data,
+          last_message: data.last_message || updatedConversations[index].last_message,
+          unread_count: data.unread_count !== undefined ? data.unread_count : updatedConversations[index].unread_count
+        };
+
+        // Sort by last_message_at
+        return updatedConversations.sort((a, b) => {
+          const timeA = new Date(a.last_message_at || 0).getTime();
+          const timeB = new Date(b.last_message_at || 0).getTime();
+          return timeB - timeA;
+        });
+      });
+    });
 
     socket.on('message_edited', (data: any) => {
       if (selectedConvRef.current?._id === data.conversationId) {
@@ -676,8 +707,9 @@ const Messages: React.FC = () => {
     });
   }, []);
 
-  const handleMessagesRead = useCallback((data: any) => {
-    if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
+   const handleMessagesRead = useCallback((data: any) => {
+     console.log('📖 [WEB] Received messages_read event:', data);
+     if (!selectedConvRef.current || data.conversationId !== selectedConvRef.current._id) return;
     setMessages(prev =>
       prev.map(m =>
         getSenderId(m.sender_id) !== doctorId ? { ...m, read: true } : m
@@ -695,10 +727,17 @@ const Messages: React.FC = () => {
 
     const msg: Message = {
       ...rawMsg,
-      _id: rawMsg._id || `msg_${Date.now()}`,
+      _id: rawMsg._id || rawMsg.message?._id || `msg_${Date.now()}`,
       conversation_id: convId,
-      timestamp: rawMsg.timestamp || new Date().toISOString(),
-      reactions: rawMsg.reactions || [],
+      message: rawMsg.message?.message || rawMsg.message || rawMsg.content || "",
+      message_type: rawMsg.message_type || rawMsg.message?.message_type || "text",
+      media_url: rawMsg.media_url || rawMsg.message?.media_url,
+      media_urls: rawMsg.media_urls || rawMsg.message?.media_urls,
+      media_name: rawMsg.media_name || rawMsg.message?.media_name,
+      media_size: rawMsg.media_size || rawMsg.message?.media_size,
+      media_mime: rawMsg.media_mime || rawMsg.message?.media_mime,
+      timestamp: rawMsg.timestamp || rawMsg.message?.timestamp || new Date().toISOString(),
+      reactions: rawMsg.reactions || rawMsg.message?.reactions || [],
     };
 
     updateConversationLastMessage(convId, msg);
@@ -989,7 +1028,7 @@ const Messages: React.FC = () => {
         const result = await response.json();
         // ✅ [WEB FIX] Robust property extraction
         const savedMsg = result.data?.message || result.data;
-        
+
         if (result.success && savedMsg?._id) {
           setMessages(prev => prev.map(m =>
             (m._id === tempId || m.clientTempId === tempId)
