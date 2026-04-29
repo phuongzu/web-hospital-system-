@@ -1579,19 +1579,19 @@ const AdminDashboard: React.FC = () => {
     )
   );
 
-  const renderMedicalRecords = () => renderSimpleTable('Medical Records Database', medicalRecords,
-    ['Patient', 'Attending Doctor', 'Diagnosis', 'Current Status', 'Consultation', 'Record Date'],
-    (rec: MedicalRecord) => (
-      <tr key={rec._id} className="hover:bg-slate-50/80 transition-colors">
-        <td className="px-6 py-4"><p className="font-bold text-slate-800">{rec.user_id.name}</p></td>
-        <td className="px-6 py-4"><p className="font-bold text-slate-800">{rec.doctor_id.name}</p></td>
-        <td className="px-6 py-4 text-sm font-medium text-slate-700">{rec.diagnosis}</td>
-        <td className="px-6 py-4"><Badge colorClass={getStatusStyles(rec.status)}>{rec.status}</Badge></td>
-        <td className="px-6 py-4"><Badge colorClass={getStatusStyles(rec.consultation_status)}>{rec.consultation_status}</Badge></td>
-        <td className="px-6 py-4 text-sm text-slate-500">{new Date(rec.created_at).toLocaleDateString()}</td>
-      </tr>
-    )
-  );
+const renderMedicalRecords = () => renderSimpleTable('Medical Records Database', medicalRecords,
+  ['Patient', 'Attending Doctor', 'Diagnosis', 'Current Status', 'Consultation', 'Record Date'],
+  (rec: MedicalRecord) => (
+    <tr key={rec._id} className="hover:bg-slate-50/80 transition-colors">
+      <td className="px-6 py-4"><p className="font-bold text-slate-800">{rec.user_id?.name ?? 'Unknown Patient'}</p></td>
+      <td className="px-6 py-4"><p className="font-bold text-slate-800">{rec.doctor_id?.name ?? 'Unassigned'}</p></td>
+      <td className="px-6 py-4 text-sm font-medium text-slate-700">{rec.diagnosis}</td>
+      <td className="px-6 py-4"><Badge colorClass={getStatusStyles(rec.status)}>{rec.status}</Badge></td>
+      <td className="px-6 py-4"><Badge colorClass={getStatusStyles(rec.consultation_status)}>{rec.consultation_status}</Badge></td>
+      <td className="px-6 py-4 text-sm text-slate-500">{new Date(rec.created_at).toLocaleDateString()}</td>
+    </tr>
+  )
+);
 
   const renderUnlockRequests = () => renderSimpleTable('Account Unlock Requests', unlockRequests,
     ['Doctor Info', 'Contact', 'Reason', 'Lock Details', 'Status', 'Actions'],
